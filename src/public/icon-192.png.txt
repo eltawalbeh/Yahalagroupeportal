@@ -1,0 +1,4 @@
+<!-- Placeholder for PWA icon 192x192 -->
+<!-- Replace this file with an actual 192x192px PNG image of the Ya Hala logo -->
+<!-- Recommended: Square logo with the Ya Hala brand colors (#7AC143 primary green) -->
+<!-- The icon should work well on both light and dark backgrounds -->

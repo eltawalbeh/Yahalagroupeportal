@@ -1,0 +1,267 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700&display=swap');
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --font-size: 16px;
+  --background: #F8F9FA;
+  --foreground: #1A1A1A;
+  --card: #ffffff;
+  --card-foreground: #1A1A1A;
+  --popover: #ffffff;
+  --popover-foreground: #1A1A1A;
+  --primary: #7AC143;
+  --primary-foreground: #ffffff;
+  --primary-dark: #006B7D;
+  --primary-teal: #00A89C;
+  --secondary: #6C757D;
+  --secondary-foreground: #ffffff;
+  --muted: #E9ECEF;
+  --muted-foreground: #6C757D;
+  --accent: #F0F9FF;
+  --accent-foreground: #006B7D;
+  --destructive: #DC3545;
+  --destructive-foreground: #ffffff;
+  --border: #DEE2E6;
+  --input: #DEE2E6;
+  --input-background: #ffffff;
+  --switch-background: #cbced4;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --ring: #7AC143;
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: #030213;
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+  
+  /* Service Colors */
+  --service-leave: #006B7D;
+  --service-advance: #7AC143;
+  --service-entry: #00A89C;
+  
+  /* Status Colors */
+  --status-pending-bg: #FFF3CD;
+  --status-pending-fg: #856404;
+  --status-approved-bg: #D4EDDA;
+  --status-approved-fg: #155724;
+  --status-rejected-bg: #F8D7DA;
+  --status-rejected-fg: #721C24;
+}
+
+.dark {
+  /* Brand-enhanced dark theme with Ya Hala colors */
+  --background: #0A0E0F; /* Very dark with subtle teal undertone */
+  --foreground: #F0F4F5; /* Soft white with slight cool tint */
+  --card: #141B1D; /* Dark card with teal influence */
+  --card-foreground: #F0F4F5;
+  --popover: #141B1D;
+  --popover-foreground: #F0F4F5;
+  
+  /* Brand Colors - Primary Green */
+  --primary: #7AC143; /* Ya Hala brand green */
+  --primary-foreground: #ffffff;
+  --primary-dark: #005661; /* Darker teal for dark mode */
+  --primary-teal: #00958A; /* Adjusted turquoise for dark mode */
+  
+  /* Secondary with brand teal influence */
+  --secondary: #1E3238; /* Dark teal-gray */
+  --secondary-foreground: #E5F0F2;
+  
+  /* Muted with subtle brand color */
+  --muted: #1A2528; /* Dark muted with teal hint */
+  --muted-foreground: #9BA8AB;
+  
+  /* Accent using brand turquoise */
+  --accent: #0D2D2F; /* Dark accent with teal */
+  --accent-foreground: #7AC143; /* Brand green for accent text */
+  
+  /* Destructive */
+  --destructive: #DC3545;
+  --destructive-foreground: #ffffff;
+  
+  /* Borders and inputs with brand influence */
+  --border: #1E3238; /* Teal-influenced border */
+  --input: #1E3238;
+  --input-background: #0F1617;
+  --switch-background: #2A3C42;
+  
+  /* Ring using brand green */
+  --ring: #7AC143;
+  
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  
+  /* Charts with brand colors */
+  --chart-1: #7AC143; /* Brand green */
+  --chart-2: #00A89C; /* Brand turquoise */
+  --chart-3: #006B7D; /* Brand dark teal */
+  --chart-4: #5FB030; /* Lighter green variation */
+  --chart-5: #008F84; /* Teal variation */
+  
+  /* Sidebar with brand influence */
+  --sidebar: #0F1617;
+  --sidebar-foreground: #E5F0F2;
+  --sidebar-primary: #7AC143;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1A2528;
+  --sidebar-accent-foreground: #E5F0F2;
+  --sidebar-border: #1E3238;
+  --sidebar-ring: #7AC143;
+  
+  /* Service Colors (same as light mode) */
+  --service-leave: #006B7D;
+  --service-advance: #7AC143;
+  --service-entry: #00A89C;
+  
+  /* Status Colors for dark mode */
+  --status-pending-bg: #3D2F1A;
+  --status-pending-fg: #F4D576;
+  --status-approved-bg: #1E3821;
+  --status-approved-fg: #7AC143;
+  --status-rejected-bg: #3A1A1D;
+  --status-rejected-fg: #F4A1A8;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-dark: var(--primary-dark);
+  --color-primary-teal: var(--primary-teal);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-service-leave: var(--service-leave);
+  --color-service-advance: var(--service-advance);
+  --color-service-entry: var(--service-entry);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+  
+  body:where([dir="ltr"]) {
+    font-family: 'Inter', sans-serif;
+  }
+  
+  body:where([dir="rtl"]) {
+    font-family: 'Cairo', sans-serif;
+  }
+
+  /* Improved mobile touch targets */
+  @media (max-width: 768px) {
+    button, a, input, select, textarea {
+      min-height: 44px;
+    }
+  }
+}
+
+/**
+ * Base typography. This is not applied to elements which have an ancestor with a Tailwind text class.
+ */
+@layer base {
+  :where(:not(:has([class*=" text-"]), :not(:has([class^="text-"])))) {
+    h1 {
+      font-size: var(--text-2xl);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    h2 {
+      font-size: var(--text-xl);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    h3 {
+      font-size: var(--text-lg);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    h4 {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    p {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-normal);
+      line-height: 1.5;
+    }
+
+    label {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    button {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    input {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-normal);
+      line-height: 1.5;
+    }
+  }
+}
+
+html {
+  font-size: var(--font-size);
+}
