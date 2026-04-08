@@ -21,7 +21,7 @@ import {
   Server,
   AlertTriangle,
   ChevronRight,
-  CalendarCheck,
+  Plane,
 } from 'lucide-react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -73,8 +73,9 @@ export function AdminLayout({ children, activePage, onNavigate, pendingCount = 0
   const navigation = [
     { id: 'dashboard', label: t('Dashboard', 'لوحة التحكم'), icon: LayoutDashboard },
     { id: 'requests', label: t('Requests', 'الطلبات'), icon: FileText, badge: pendingCount },
-    { id: 'employees', label: t('Employees', 'الموظفين'), icon: Users },
-    { id: 'leave-balances', label: t('Leave Balances', 'أرصدة الإجازات'), icon: CalendarCheck },
+    { id: 'employees', label: t('Employees', 'الموظفون'), icon: Users },
+    { id: 'ticket-management', label: t('Ticket Management', 'إدارة التذاكر'), icon: Plane },
+    { id: 'document-expiry', label: t('Document Expiry', 'انتهاء الوثائق'), icon: AlertTriangle },
     { id: 'services', label: t('Portal Services', 'خدمات البوابة'), icon: AppWindow },
     { id: 'announcements', label: t('Announcements', 'التعاميم'), icon: Megaphone },
     { id: 'companies', label: t('Companies', 'الشركات'), icon: Building2 },

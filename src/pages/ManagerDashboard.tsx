@@ -11,6 +11,7 @@ import { ManagerLayout } from '../components/layout/ManagerLayout';
 import { ManagerDashboardV2 } from './manager/ManagerDashboardV2';
 
 // Reusable Page Components
+import { EmployeeManagement } from './EmployeeManagement';
 import { LeaveRequest } from './LeaveRequest';
 import { AdvanceRequest } from './AdvanceRequest';
 import { EntryPermissionRequest } from './EntryPermissionRequest';
@@ -21,9 +22,11 @@ import { RequestComments } from '../components/RequestComments';
 import { ResendEmailButton } from '../components/ResendEmailButton';
 import { RequestDetailView } from '../components/RequestDetailView';
 import { DocumentManagement } from '../components/DocumentManagement';
+import { DocumentExpiryReport } from '../components/DocumentExpiryReport';
 import { EmployeeRequestHistory } from '../components/EmployeeRequestHistory';
 import { AnnouncementBoard } from '../components/AnnouncementBoard';
 import { AnnouncementView } from '../components/AnnouncementView';
+import { HRAnnouncementBoard } from '../components/HRAnnouncementBoard';
 import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
@@ -157,13 +160,21 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
     total: 0
   });
 
+  // Team document alerts (B)
+  const [teamDocAlerts, setTeamDocAlerts] = useState<any[]>([]);
+
   // HR Permissions (toggled by Super Admin)
   const [hrPermissions, setHrPermissions] = useState({
     can_upload_documents: false,
     can_edit_employee_info: false,
+    can_edit_financial_info: false,
     can_resend_emails: true,
-    can_cancel_requests: false
+    can_cancel_requests: false,
+    can_post_announcements: false,
   });
+
+  // Whether this specific employee is allowed to approve/reject requests
+  const [canApproveRequests, setCanApproveRequests] = useState(false);
 
   // Cancel request state
   const [cancelTarget, setCancelTarget] = useState<Request | null>(null);
@@ -182,10 +193,13 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
     marital_status: '',
     blood_type: '',
     education_level: '',
+    iqama_expiry: '',
     work_permit_expiry: '',
     passport_number: '',
     passport_expiry: '',
-    notes: ''
+    notes: '',
+    special_case: false,
+    special_case_ceiling: '',
   });
   const [savingExtraInfo, setSavingExtraInfo] = useState(false);
 
@@ -197,6 +211,8 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
       fetchAllEmployees();
       fetchHrPermissions();
       fetchContractsExpiring();
+      fetchApprovalPermission();
+      fetchTeamDocAlerts();
     }
   }, [employee]);
 
@@ -212,13 +228,33 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
           setHrPermissions({
             can_upload_documents: data.permissions.can_upload_documents || false,
             can_edit_employee_info: data.permissions.can_edit_employee_info || false,
+            can_edit_financial_info: data.permissions.can_edit_financial_info || false,
             can_resend_emails: data.permissions.can_resend_emails !== false,
-            can_cancel_requests: data.permissions.can_cancel_requests || false
+            can_cancel_requests: data.permissions.can_cancel_requests || false,
+            can_post_announcements: data.permissions.can_post_announcements || false,
           });
         }
       }
     } catch (error) {
       console.error('Error fetching HR permissions:', error);
+    }
+  };
+
+  const fetchApprovalPermission = async () => {
+    if (!employee?.id) return;
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-fdcde35a/manager/can-approve?employee_id=${employee.id}`,
+        { headers: { 'Authorization': `Bearer ${publicAnonKey}` } }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        setCanApproveRequests(data.can_approve === true);
+        console.log(`[ManagerDashboard] Approval permission for employee ${employee.id}: ${data.can_approve}`);
+      }
+    } catch (error) {
+      console.error('Error fetching approval permission:', error);
+      setCanApproveRequests(false);
     }
   };
 
@@ -262,6 +298,22 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
       }
     } catch (error) {
       console.error('Error fetching contracts expiring:', error);
+    }
+  };
+
+  const fetchTeamDocAlerts = async () => {
+    if (!employee?.id) return;
+    try {
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-fdcde35a/manager/team-document-expiry?manager_id=${employee.id}&days=90`,
+        { headers: { 'Authorization': `Bearer ${publicAnonKey}` } }
+      );
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) setTeamDocAlerts(data.alerts || []);
+      }
+    } catch (error) {
+      console.error('Error fetching team doc alerts:', error);
     }
   };
 
@@ -544,7 +596,7 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
                 </div>
 
                 {/* Actions */}
-                {request.status === 'pending' && (
+                {request.status === 'pending' && canApproveRequests && (
                   <div className="flex items-center gap-2 shrink-0">
                     <Button 
                       size="sm" 
@@ -565,6 +617,12 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
                       <CheckCircle2 className="w-4 h-4 me-1" />
                       {t('Approve', 'موافقة')}
                     </Button>
+                  </div>
+                )}
+                {request.status === 'pending' && !canApproveRequests && (
+                  <div className="flex items-center gap-1.5 shrink-0 text-xs text-muted-foreground bg-slate-100 dark:bg-slate-800 rounded-md px-2.5 py-1.5">
+                    <Lock className="w-3 h-3" />
+                    {t('Awaiting HR/Admin', 'بانتظار الموارد البشرية')}
                   </div>
                 )}
                 {request.status !== 'pending' && (
@@ -814,10 +872,13 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
                       marital_status: existing.marital_status || '',
                       blood_type: existing.blood_type || '',
                       education_level: existing.education_level || '',
+                      iqama_expiry: existing.iqama_expiry || '',
                       work_permit_expiry: existing.work_permit_expiry || '',
                       passport_number: existing.passport_number || '',
                       passport_expiry: existing.passport_expiry || '',
-                      notes: existing.notes || ''
+                      notes: existing.notes || '',
+                      special_case: existing.special_case || false,
+                      special_case_ceiling: existing.special_case_ceiling || '',
                     });
                     setEditingExtraInfo(true);
                   }}>
@@ -875,6 +936,7 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
                   { key: 'marital_status', label: t('Marital Status', 'الحالة الاجتماعية'), type: 'text' },
                   { key: 'blood_type', label: t('Blood Type', 'فصيلة الدم'), type: 'text' },
                   { key: 'education_level', label: t('Education Level', 'الستوى التعليمي'), type: 'text' },
+                  { key: 'iqama_expiry', label: t('Iqama Expiry', 'انتهاء الإقامة'), type: 'date' },
                   { key: 'work_permit_expiry', label: t('Work Permit Expiry', 'انتهاء تصريح العمل'), type: 'date' },
                   { key: 'passport_number', label: t('Passport Number', 'رقم الجواز'), type: 'text' },
                   { key: 'passport_expiry', label: t('Passport Expiry', 'انتهاء الجواز'), type: 'date' },
@@ -908,6 +970,7 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
                     { key: 'marital_status', label: t('Marital Status', 'الحالة الاجتماعية') },
                     { key: 'blood_type', label: t('Blood Type', 'فصيلة الدم') },
                     { key: 'education_level', label: t('Education Level', 'المستوى التعليمي') },
+                    { key: 'iqama_expiry', label: t('Iqama Expiry', 'انتهاء الإقامة') },
                     { key: 'work_permit_expiry', label: t('Work Permit Expiry', 'انتهاء تصريح العمل') },
                     { key: 'passport_number', label: t('Passport Number', 'رقم الجواز') },
                     { key: 'passport_expiry', label: t('Passport Expiry', 'انتهاء الجواز') },
@@ -1024,18 +1087,34 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
             recentRequests={requests} 
             employeesCount={employeesList.length}
             contractsExpiring={contractsExpiring}
+            teamDocAlerts={teamDocAlerts}
             onNavigate={setActivePage}
             onProcessRequest={handleQuickProcess}
+            canApproveRequests={canApproveRequests}
           />
         );
       case 'requests':
         return renderRequestsPage();
       case 'employees':
-        return renderEmployeesPage();
+        return (
+          <EmployeeManagement
+            onBack={() => setActivePage('dashboard')}
+            callerRole="hr"
+            hrPermissions={{
+              can_edit_employee_info: hrPermissions.can_edit_employee_info,
+              can_edit_financial_info: hrPermissions.can_edit_financial_info,
+              can_upload_documents: hrPermissions.can_upload_documents,
+              can_cancel_requests: hrPermissions.can_cancel_requests,
+            }}
+            hrManagerId={employee?.id}
+          />
+        );
       case 'calendar':
         return <LeaveCalendar onBack={() => setActivePage('dashboard')} managerId={employee?.id} />;
       case 'announcements':
-        return <AnnouncementView />;
+        return hrPermissions.can_post_announcements
+          ? <HRAnnouncementBoard />
+          : <AnnouncementView />;
       case 'documents':
         return (
           hrPermissions.can_upload_documents
@@ -1059,9 +1138,10 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
         );
       case 'leave':
         return (
-          <LeaveRequest 
-            onBack={() => setActivePage('dashboard')} 
-            onSuccess={() => { setActivePage('requests'); fetchAllRequests(); }} 
+          <LeaveRequest
+            onBack={() => setActivePage('dashboard')}
+            onSuccess={() => { setActivePage('requests'); fetchAllRequests(); }}
+            onNavigateToTickets={() => setActivePage('ticket')}
           />
         );
       case 'advance':
@@ -1078,6 +1158,8 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
             onSuccess={() => { setActivePage('requests'); fetchAllRequests(); }} 
           />
         );
+      case 'document-expiry':
+        return <DocumentExpiryReport callerRole="manager" />;
       case 'profile':
         return <EmployeeProfile onBack={() => setActivePage('dashboard')} />;
       default:
@@ -1193,6 +1275,16 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
       {/* Request Detail Dialog */}
       <Dialog open={showDetailDialog} onOpenChange={(open) => { setShowDetailDialog(open); if (!open) setSelectedRequest(null); }}>
         <DialogContent className="sm:max-w-5xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
+          <DialogTitle className="sr-only">
+            {selectedRequest
+              ? t('Request Details', 'تفاصيل الطلب')
+              : t('Request', 'الطلب')}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            {selectedRequest
+              ? t('Viewing full details for this request', 'عرض التفاصيل الكاملة لهذا الطلب')
+              : t('Request detail view', 'عرض تفاصيل الطلب')}
+          </DialogDescription>
           {selectedRequest && (
             <RequestDetailView
               request={{
@@ -1208,8 +1300,8 @@ export function ManagerDashboard({ onLogout }: ManagerDashboardProps = {}) {
                 name: employee.full_name,
                 name_ar: employee.full_name_ar,
               } : undefined}
-              onApprove={(id) => handleQuickProcess(id, 'approved')}
-              onReject={(id) => handleQuickProcess(id, 'rejected')}
+              onApprove={canApproveRequests ? (id) => handleQuickProcess(id, 'approved') : undefined}
+              onReject={canApproveRequests ? (id) => handleQuickProcess(id, 'rejected') : undefined}
               onRefresh={() => fetchAllRequests()}
               resendEmailProps={employee ? {
                 callerRole: 'manager',

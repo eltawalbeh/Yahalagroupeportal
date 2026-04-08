@@ -19,6 +19,19 @@ interface Employee {
   role?: 'employee' | 'manager' | 'accountant' | 'owner';
   contract_end_date?: string;
   hire_date?: string;
+  nationality?: string;
+  extra_info?: {
+    passport_expiry?: string;
+    iqama_expiry?: string;
+    work_permit_expiry?: string;
+    reentry_visa_expiry?: string;
+    passport_number?: string;
+    marital_status?: string;
+    blood_type?: string;
+    education_level?: string;
+    notes?: string;
+    [key: string]: string | undefined;
+  };
 }
 
 interface Company {

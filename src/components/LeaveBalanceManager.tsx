@@ -110,13 +110,27 @@ export function LeaveBalanceManager() {
   const fetchEmployees = async () => {
     setLoading(true);
     try {
-      const data = await adminFetch('/admin/employees');
+      const res = await adminFetch('/admin/employees');
+      // Parse as text first for safe error handling
+      const text = await res.text();
+      let data: any;
+      try { data = JSON.parse(text); } catch (parseErr) {
+        console.error('Error parsing employees response:', text.slice(0, 200), parseErr);
+        return;
+      }
       if (data.success) {
         const active = (data.employees || []).filter((e: any) => e.status !== 'inactive' && !e.deleted_at);
         setEmployees(active);
         setFilteredEmployees(active);
       }
-      const compData = await adminFetch('/admin/companies');
+      // Use /companies (no /admin prefix — publicly accessible endpoint)
+      const compRes = await adminFetch('/companies');
+      const compText = await compRes.text();
+      let compData: any;
+      try { compData = JSON.parse(compText); } catch (parseErr) {
+        console.error('Error parsing companies response:', compText.slice(0, 200), parseErr);
+        return;
+      }
       if (compData.success) setCompanies(compData.companies || []);
     } catch (err) {
       console.error('Error fetching employees for leave balance:', err);
@@ -129,7 +143,8 @@ export function LeaveBalanceManager() {
     setLoadingBalance(true);
     setSelectedEmpId(empId);
     try {
-      const data = await adminFetch(`/admin/leave-balances/${empId}`);
+      const res = await adminFetch(`/admin/leave-balances/${empId}`);
+      const data = await res.json();
       if (data.success) {
         setBalanceData(data);
       } else {
@@ -147,7 +162,7 @@ export function LeaveBalanceManager() {
     if (!selectedEmpId || !adjustDialog.type) return;
     setSaving(true);
     try {
-      const data = await adminFetch(`/admin/leave-balances/${selectedEmpId}`, {
+      const res = await adminFetch(`/admin/leave-balances/${selectedEmpId}`, {
         method: 'PATCH',
         body: JSON.stringify({
           leaveType: adjustDialog.type,
@@ -157,6 +172,7 @@ export function LeaveBalanceManager() {
           adjustedBy: adminInfo?.name || 'HR Admin',
         }),
       });
+      const data = await res.json();
       if (data.success) {
         toast.success(t('Balance adjusted successfully', 'تم تعديل الرصيد بنجاح'));
         setAdjustDialog({ type: '', open: false });

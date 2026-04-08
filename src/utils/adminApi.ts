@@ -74,15 +74,34 @@ export async function adminFetch(path: string, init: RequestInit = {}): Promise<
     ...(isFormData  ? {}                                      : { 'Content-Type': 'application/json' }),
   };
 
-  return fetch(
-    `https://${projectId}.supabase.co/functions/v1/make-server-fdcde35a${path}`,
-    {
-      ...init,
-      headers: {
-        ...baseHeaders,
-        // Allow callers to override individual headers if needed
-        ...(init.headers as Record<string, string> || {}),
-      },
+  const url = `https://${projectId}.supabase.co/functions/v1/make-server-fdcde35a${path}`;
+  const reqInit: RequestInit = {
+    ...init,
+    headers: {
+      ...baseHeaders,
+      ...(init.headers as Record<string, string> || {}),
+    },
+  };
+
+  // Retry up to 3 times for transient 502 / network errors
+  const MAX_RETRIES = 3;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, reqInit);
+      if (res.status === 502 && attempt < MAX_RETRIES - 1) {
+        // Transient gateway error — retry after backoff
+        await new Promise(r => setTimeout(r, 400 * Math.pow(2, attempt)));
+        continue;
+      }
+      return res;
+    } catch (err: any) {
+      lastError = err;
+      const msg = String(err?.message || '');
+      const isTransient = msg.includes('fetch') || msg.includes('network') || msg.includes('Failed');
+      if (!isTransient || attempt === MAX_RETRIES - 1) throw err;
+      await new Promise(r => setTimeout(r, 400 * Math.pow(2, attempt)));
     }
-  );
+  }
+  throw lastError;
 }

@@ -5,6 +5,7 @@ import { CompanyPortal } from '../CompanyPortal';
 import { LeaveRequest } from '../LeaveRequest';
 import { AdvanceRequest } from '../AdvanceRequest';
 import { EntryPermissionRequest } from '../EntryPermissionRequest';
+import { TicketRequest } from '../TicketRequest';
 import { RequestHistory } from '../RequestHistory';
 import { EmployeeProfile } from '../EmployeeProfile';
 import { AnnouncementView } from '../../components/AnnouncementView';
@@ -18,6 +19,7 @@ import { AnnouncementView } from '../../components/AnnouncementView';
  *   /employee/leave     → LeaveRequest
  *   /employee/advance   → AdvanceRequest
  *   /employee/entry     → EntryPermissionRequest
+ *   /employee/ticket    → TicketRequest (annual ticket + re-entry visa)
  *   /employee/history   → RequestHistory
  *   /employee/announcements → AnnouncementView
  *   /employee/profile   → EmployeeProfile
@@ -29,6 +31,7 @@ const PATH_TO_PAGE: Record<string, string> = {
   'leave': 'leave',
   'advance': 'advance',
   'entry': 'entry',
+  'ticket': 'ticket',
   'history': 'history',
   'announcements': 'announcements',
   'profile': 'profile',
@@ -39,6 +42,7 @@ const PAGE_TO_PATH: Record<string, string> = {
   'leave': 'leave',
   'advance': 'advance',
   'entry': 'entry',
+  'ticket': 'ticket',
   'history': 'history',
   'announcements': 'announcements',
   'profile': 'profile',
@@ -70,11 +74,19 @@ export function EmployeeShell() {
           />
         );
       case 'leave':
-        return <LeaveRequest onBack={handleBack} onSuccess={handleSuccess} />;
+        return (
+          <LeaveRequest
+            onBack={handleBack}
+            onSuccess={handleSuccess}
+            onNavigateToTickets={() => handleNavigate('ticket')}
+          />
+        );
       case 'advance':
         return <AdvanceRequest onBack={handleBack} onSuccess={handleSuccess} />;
       case 'entry':
         return <EntryPermissionRequest onBack={handleBack} onSuccess={handleSuccess} />;
+      case 'ticket':
+        return <TicketRequest onBack={handleBack} onSuccess={handleSuccess} />;
       case 'history':
         return <RequestHistory onBack={handleBack} />;
       case 'announcements':

@@ -32,7 +32,8 @@ import { AdminDashboardV2 } from './admin/AdminDashboardV2';
 import { AdminPortalServices } from './admin/AdminPortalServices';
 import { LeaveCalendar } from './admin/LeaveCalendar';
 import { EmployeeManagement } from './EmployeeManagement';
-import { LeaveBalanceManager } from '../components/LeaveBalanceManager';
+import { TicketBandsManager } from '../components/TicketBandsManager';
+import { DocumentExpiryReport } from '../components/DocumentExpiryReport';
 
 interface AdminDashboardProps {
   onLogout?: () => void;
@@ -167,6 +168,10 @@ export function AdminDashboard({ onLogout, onNavigate }: AdminDashboardProps = {
     fetchContractsExpiring();
     // Silently check contract expiry alerts on admin login (runs daily)
     adminFetch('/admin/check-contract-alerts').catch((e: any) => console.log('Contract alert check skipped:', e));
+    // Silently check document expiry alerts on admin login
+    adminFetch('/admin/check-document-expiry-alerts').catch((e: any) => console.log('Document expiry check skipped:', e));
+    // Auto-credit annual leave balances on hire anniversaries (daily trigger)
+    adminFetch('/admin/check-anniversary-balances').catch((e: any) => console.log('Anniversary balance check skipped:', e));
 
     // Auto-refresh requests every 30 seconds
     const interval = setInterval(() => {
@@ -469,7 +474,7 @@ export function AdminDashboard({ onLogout, onNavigate }: AdminDashboardProps = {
       }
     } catch (error) {
       console.error('Error deleting company:', error);
-      toast.error(t('Failed to delete company', 'فشل حذف الشركة'));
+      toast.error(t('Failed to delete company', 'فشل حذف الشرك'));
     }
   };
 
@@ -726,54 +731,7 @@ export function AdminDashboard({ onLogout, onNavigate }: AdminDashboardProps = {
   );
 
   const renderEmployees = () => (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">{t('Employee Management', 'إدارة الموظفين')}</h2>
-          <p className="text-muted-foreground text-sm mt-1">
-            {t(`${employees.length} total employees`, `${employees.length} إجمالي الموظفين`)}
-          </p>
-        </div>
-        <Button onClick={() => onNavigate?.('employees')} className="bg-indigo-600 hover:bg-indigo-700 text-white">
-          <Users className="w-4 h-4 me-2" />
-          {t('Full Management', 'الإدارة الكاملة')}
-        </Button>
-      </div>
-
-      <div className="bg-card rounded-xl shadow-sm border border-border/50 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-muted/50">
-              <tr>
-                <th className="px-4 py-3 text-start text-sm font-medium">{t('ID', 'الرقم')}</th>
-                <th className="px-4 py-3 text-start text-sm font-medium">{t('Name', 'الاسم')}</th>
-                <th className="px-4 py-3 text-start text-sm font-medium">{t('Company', 'الشركة')}</th>
-                <th className="px-4 py-3 text-start text-sm font-medium">{t('Position', 'المنصب')}</th>
-                <th className="px-4 py-3 text-start text-sm font-medium">{t('Mobile', 'الجوال')}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {employees.map((emp) => (
-                <tr key={emp.id} className="hover:bg-muted/20 transition-colors">
-                  <td className="px-4 py-3 font-mono text-sm">{emp.id}</td>
-                  <td className="px-4 py-3">
-                    <p className="font-medium">{t(emp.full_name, emp.full_name_ar || emp.full_name)}</p>
-                  </td>
-                  <td className="px-4 py-3 text-sm">{emp.companies?.name || emp.company_name || '-'}</td>
-                  <td className="px-4 py-3 text-sm">{emp.position || '-'}</td>
-                  <td className="px-4 py-3 text-sm">{emp.phone || '-'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {employees.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground">
-              {t('No employees found', 'لا يوجد موظفين')}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    <EmployeeManagement onBack={() => setActivePage('dashboard')} />
   );
 
   const renderCompanies = () => (
@@ -893,7 +851,12 @@ export function AdminDashboard({ onLogout, onNavigate }: AdminDashboardProps = {
       case 'employees':
         return <EmployeeManagement onBack={() => setActivePage('dashboard')} />;
       case 'leave-balances':
-        return <LeaveBalanceManager />;
+        setActivePage('employees');
+        return null;
+      case 'ticket-management':
+        return <TicketBandsManager />;
+      case 'document-expiry':
+        return <DocumentExpiryReport callerRole="admin" />;
       case 'companies':
         return renderCompanies();
       case 'services':
@@ -972,6 +935,16 @@ export function AdminDashboard({ onLogout, onNavigate }: AdminDashboardProps = {
       {/* Request Details Modal */}
       <Dialog open={isRequestModalOpen} onOpenChange={setIsRequestModalOpen}>
         <DialogContent className="sm:max-w-5xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
+          <DialogTitle className="sr-only">
+            {selectedRequest
+              ? t('Request Details', 'تفاصيل الطلب')
+              : t('Request', 'الطلب')}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            {selectedRequest
+              ? t('Viewing full details for this request', 'عرض التفاصيل الكاملة لهذا الطلب')
+              : t('Request detail view', 'عرض تفاصيل الطلب')}
+          </DialogDescription>
           {selectedRequest && (
             <RequestDetailView
               request={selectedRequest}

@@ -4,7 +4,7 @@
 // removed from the database, storage buckets, and all related data.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import * as kv from './kv_store.tsx';
+import * as kv from './kv-retry.tsx';
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',

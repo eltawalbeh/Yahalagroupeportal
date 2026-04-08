@@ -8,7 +8,7 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { adminFetch } from '../../utils/adminApi';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 
@@ -139,6 +139,15 @@ export function LeaveCalendar({ onBack, managerId }: LeaveCalendarProps) {
       .map(e => e.employee_name)
   );
 
+  // Pending count for the summary pill
+  const monthlyPending = leaveEvents.filter(e => {
+    const start = new Date(e.start_date);
+    const end   = new Date(e.end_date);
+    const mStart = new Date(year, month, 1);
+    const mEnd   = new Date(year, month + 1, 0);
+    return e.status === 'pending' && start <= mEnd && end >= mStart;
+  }).length;
+
   return (
     <div className="space-y-6">
       {/* ── Page header ──────────────────────────────────────────────────────── */}
@@ -172,11 +181,19 @@ export function LeaveCalendar({ onBack, managerId }: LeaveCalendarProps) {
                 {monthlyEmployees.size} {t('on leave this month', 'موظف في إجازة هذا الشهر')}
               </span>
             </div>
+            {monthlyPending > 0 && (
+              <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                <span className="text-xs font-medium text-amber-700 dark:text-amber-300">
+                  {monthlyPending} {t('pending', 'معلق')}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* ── Calendar card ─────────────────────────────────────────────────── */}
+      {/* ── Calendar card ─────────────────────────────────────��───────────── */}
       <Card className="overflow-hidden">
         {/* Month navigation */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-muted/30">
@@ -290,7 +307,7 @@ export function LeaveCalendar({ onBack, managerId }: LeaveCalendarProps) {
                             return (
                               <div
                                 key={ev.id || idx}
-                                className={`flex items-center gap-0.5 rounded px-1 py-px text-[8px] font-medium truncate border ${cfg.bg} ${cfg.text} ${cfg.border}`}
+                                className={`flex items-center gap-0.5 rounded px-1 py-px text-[8px] font-medium truncate border ${cfg.bg} ${cfg.text} ${cfg.border} ${ev.status === 'pending' ? 'border-dashed opacity-80' : ''}`}
                               >
                                 <Icon className="w-2 h-2 shrink-0" />
                                 <span className="truncate">{firstName}</span>
@@ -317,8 +334,8 @@ export function LeaveCalendar({ onBack, managerId }: LeaveCalendarProps) {
                             return (
                               <div
                                 key={ev.id || idx}
-                                className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] lg:text-[11px] font-medium truncate border ${cfg.bg} ${cfg.text} ${cfg.border}`}
-                                title={`${displayName} — ${language === 'ar' ? cfg.labelAr : cfg.labelEn}`}
+                                className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] lg:text-[11px] font-medium truncate border ${cfg.bg} ${cfg.text} ${cfg.border} ${ev.status === 'pending' ? 'border-dashed opacity-80' : ''}`}
+                                title={`${displayName} — ${language === 'ar' ? cfg.labelAr : cfg.labelEn}${ev.status === 'pending' ? ' (Pending)' : ''}`}
                               >
                                 <Icon className="w-2.5 h-2.5 shrink-0" />
                                 <span className="truncate">{shortName}</span>
@@ -358,6 +375,10 @@ export function LeaveCalendar({ onBack, managerId }: LeaveCalendarProps) {
               <span className="w-2.5 h-2.5 rounded-full ring-2 ring-indigo-500 bg-indigo-50" />
               <span className="text-xs text-muted-foreground">{t('Today', 'اليوم')}</span>
             </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded border border-dashed border-slate-400 bg-slate-100 dark:bg-slate-700" />
+              <span className="text-xs text-muted-foreground">{t('Pending (dashed)', 'معلق (متقطع)')}</span>
+            </div>
           </div>
         </div>
       </Card>
@@ -370,12 +391,12 @@ export function LeaveCalendar({ onBack, managerId }: LeaveCalendarProps) {
               <CalendarDays className="w-5 h-5 text-indigo-500 shrink-0" />
               <span>{selectedDateLabel}</span>
             </DialogTitle>
-            <p className="text-sm text-muted-foreground mt-1">
+            <DialogDescription className="text-sm text-muted-foreground mt-1">
               {selectedEvents.length}{' '}
               {selectedEvents.length === 1
                 ? t('employee on leave', 'موظف في إجازة')
                 : t('employees on leave', 'موظفون في إجازة')}
-            </p>
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 mt-2">

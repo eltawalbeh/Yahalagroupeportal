@@ -14,6 +14,7 @@ import {
   Search,
   DoorOpen,
   Megaphone,
+  Plane,
 } from 'lucide-react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -52,6 +53,7 @@ export function EmployeeLayout({ children, activePage, onNavigate }: EmployeeLay
     { id: 'leave', label: t('Leave Request', 'طلب إجازة'), icon: Calendar },
     { id: 'advance', label: t('Salary Advance', 'سلفة مالية'), icon: DollarSign },
     { id: 'entry', label: t('Entry Permission', 'إذن خروج وعودة'), icon: DoorOpen },
+    { id: 'ticket', label: t('Annual Ticket', 'التذكرة السنوية'), icon: Plane },
     { id: 'history', label: t('My Requests', 'طلباتي'), icon: History },
     { id: 'announcements', label: t('Announcements', 'التعاميم'), icon: Megaphone },
     { id: 'profile', label: t('My Profile', 'ملفي الشخصي'), icon: UserCircle },

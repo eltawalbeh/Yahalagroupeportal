@@ -1,9 +1,26 @@
 import { Hono } from 'npm:hono';
-import * as kv from './kv_store.tsx';
+import * as kv from './kv-retry.tsx';
 import { sendEmail, sendEmailWithCC } from './email-service.tsx';
 
 // ── Allowed roles for HR / Manager portal ────────────────────────────────────
 const MANAGER_ROLES = new Set(['manager', 'admin', 'super_admin', 'accountant', 'owner']);
+
+/**
+ * Roles that are inherently allowed to approve requests (in addition to
+ * employees with can_approve_requests: true set by the Super Admin).
+ */
+const APPROVAL_ROLES = new Set(['admin', 'super_admin']);
+
+/**
+ * Check if an employee is authorised to approve / reject requests.
+ * Returns true if the employee has an APPROVAL_ROLE or the explicit flag.
+ */
+function canEmployeeApprove(emp: any): boolean {
+  if (!emp) return false;
+  if (APPROVAL_ROLES.has(emp.role)) return true;
+  if (emp.can_approve_requests === true) return true;
+  return false;
+}
 
 /**
  * Verify that the given employee ID exists and has an elevated role.
@@ -267,6 +284,28 @@ app.post('/process-request', async (c) => {
 
     // Get manager info
     const managerInfo = await kv.get(`employee:${manager_id}`);
+
+    // ── Authorization: only HR / Super Admin can approve ─────────────────────
+    if (!managerInfo || !canEmployeeApprove(managerInfo)) {
+      console.warn(`[process-request] DENIED: employee ${manager_id} (role: ${managerInfo?.role}) tried to ${status} request ${request_id}`);
+      return c.json({
+        success: false,
+        message: 'Access denied. Only HR representatives or administrators are authorised to approve or reject requests.',
+        messageAr: 'تم رفض الوصول. فقط مسؤولو الموارد البشرية أو المسؤولون مخوّلون بالموافقة على الطلبات أو رفضه��.'
+      }, 403);
+    }
+
+    // ── Self-approval prevention ──────────────────────────────────────────────
+    const requestEmployeeId = request.employee_id?.toString();
+    if (requestEmployeeId && requestEmployeeId === manager_id?.toString()) {
+      console.warn(`[process-request] SELF-APPROVAL BLOCKED: employee ${manager_id} tried to ${status} their own request ${request_id}`);
+      return c.json({
+        success: false,
+        message: 'Self-approval is not permitted. You cannot approve or reject your own request.',
+        messageAr: 'الموافقة الذاتية غير مسموح بها. لا يمكنك الموافقة على طلبك الخاص أو رفضه.'
+      }, 403);
+    }
+
     const managerName = managerInfo?.full_name || 'HR Manager';
     const managerNameAr = managerInfo?.full_name_ar || managerName;
 
@@ -568,6 +607,72 @@ app.patch('/update-employee-limits', async (c) => {
   }
 });
 
+// ==================== HR LEAVE BALANCE ADJUSTMENT ====================
+
+/**
+ * PATCH /manager/leave-adjustments/:employeeId
+ * Allows an HR/Manager user to manually adjust an employee's leave balance
+ * for the current financial year. Mirrors the admin leave-balance PATCH endpoint
+ * but authenticates via manager_id instead of X-Admin-Token.
+ */
+app.patch('/leave-adjustments/:employeeId', async (c) => {
+  try {
+    const employeeId = c.req.param('employeeId');
+    const { manager_id, leaveType, adjustmentDays, reason, reasonAr, adjustedBy } = await c.req.json();
+
+    if (!manager_id) {
+      return c.json({ success: false, message: 'manager_id is required' }, 400);
+    }
+    const manager = await verifyManagerPermission(manager_id);
+    if (!manager) {
+      return c.json({ success: false, message: 'Unauthorized: valid manager_id required' }, 401);
+    }
+
+    if (!leaveType || adjustmentDays === undefined || adjustmentDays === null) {
+      return c.json({ success: false, message: 'leaveType and adjustmentDays are required' }, 400);
+    }
+    if (!['annual', 'sick', 'emergency', 'unpaid'].includes(leaveType)) {
+      return c.json({ success: false, message: 'Invalid leave type' }, 400);
+    }
+
+    const employee = await kv.get(`employee:${employeeId}`);
+    if (!employee) return c.json({ success: false, message: 'Employee not found' }, 404);
+
+    const fyKey = getFinancialYearKey(employee.hire_date || new Date().toISOString());
+    const adjustmentKey = `leave_adjustments:${employeeId}:${fyKey}`;
+    const adjustments = (await kv.get(adjustmentKey)) || {};
+
+    const current = adjustments[leaveType] || { amount: 0, notes: [], history: [] };
+    const historyEntry = {
+      id: crypto.randomUUID(),
+      previousAmount: current.amount,
+      newAmount: adjustmentDays,
+      reason: reason || '',
+      reasonAr: reasonAr || '',
+      adjustedBy: adjustedBy || manager.full_name || 'HR',
+      timestamp: new Date().toISOString(),
+    };
+
+    adjustments[leaveType] = {
+      amount: adjustmentDays,
+      notes: reason ? [reason] : current.notes || [],
+      history: [...(current.history || []), historyEntry],
+    };
+
+    await kv.set(adjustmentKey, adjustments);
+    console.log(`[Manager] Leave balance adjusted for employee ${employeeId}: ${leaveType} → ${adjustmentDays} days (by ${adjustedBy || manager.full_name})`);
+
+    return c.json({
+      success: true,
+      message: `${leaveType} balance adjusted by ${adjustmentDays} days`,
+      adjustment: adjustments[leaveType]
+    });
+  } catch (error) {
+    console.error('[Manager] Leave adjustment error:', error);
+    return c.json({ success: false, message: `Error adjusting leave balance: ${error.message}` }, 500);
+  }
+});
+
 // ==================== MANAGER RESEND EMAIL NOTIFICATION ====================
 
 /**
@@ -670,11 +775,12 @@ app.post('/requests/:id/resend-email', async (c) => {
       }
     }
 
-    // (3) Resend to admin(s)
+    // (3) Resend to admin(s) — includes role-based admins AND can_approve_requests holders
     if (recipients.includes('admin')) {
       const allEmployees = await getValuesByPrefix('employee:');
       const admins = allEmployees.filter((emp: any) =>
-        (emp.role === 'admin' || emp.role === 'super_admin') && emp.email
+        (emp.role === 'admin' || emp.role === 'super_admin' || emp.can_approve_requests === true)
+        && emp.email && !emp.deleted_at
       );
       const employeeFullName = employee?.full_name || employee?.nameEn || 'Employee';
       for (const adm of admins) {
@@ -793,14 +899,45 @@ app.get('/hr-permissions', async (c) => {
       permissions = {
         can_upload_documents: false,
         can_edit_employee_info: false,
+        can_edit_financial_info: false,
         can_resend_emails: true,
+        can_cancel_requests: false,
+        can_post_announcements: false,
         updated_at: new Date().toISOString()
       };
+    }
+    // Back-fill missing fields for older stored records
+    if (typeof permissions.can_post_announcements === 'undefined') {
+      permissions.can_post_announcements = false;
     }
     return c.json({ success: true, permissions });
   } catch (error) {
     console.error('Error fetching HR permissions:', error);
     return c.json({ success: false, message: 'Error fetching permissions' }, 500);
+  }
+});
+
+/**
+ * GET /manager/can-approve?employee_id=xxx
+ * Returns whether the given employee is authorised to approve/reject requests.
+ * Used by the Manager Dashboard to show/hide approval buttons.
+ */
+app.get('/can-approve', async (c) => {
+  try {
+    const employeeId = c.req.query('employee_id');
+    if (!employeeId) {
+      return c.json({ success: false, can_approve: false, message: 'employee_id required' }, 400);
+    }
+    const emp = await kv.get(`employee:${employeeId}`);
+    if (!emp || emp.deleted_at) {
+      return c.json({ success: false, can_approve: false, message: 'Employee not found' }, 404);
+    }
+    const allowed = canEmployeeApprove(emp);
+    console.log(`[can-approve] employee ${employeeId} (role: ${emp.role}, flag: ${emp.can_approve_requests}) → ${allowed}`);
+    return c.json({ success: true, can_approve: allowed, role: emp.role, flag: emp.can_approve_requests ?? false });
+  } catch (error) {
+    console.error('Error checking approval permission:', error);
+    return c.json({ success: false, can_approve: false, message: 'Server error' }, 500);
   }
 });
 
@@ -818,8 +955,12 @@ app.get('/leave-calendar', async (c) => {
     }
 
     const requestsList = await getValuesByPrefix('request:');
+
+    // Whitelist: only active leave statuses appear on the calendar
+    // Rejected, cancelled, and other terminal statuses must never appear.
+    const ACTIVE_STATUSES = new Set(['approved', 'pending']);
     const leaveRequests = requestsList.filter((req: any) =>
-      req.type === 'leave' && req.status === 'approved'
+      req.type === 'leave' && ACTIVE_STATUSES.has(req.status)
     );
 
     const events = await Promise.all(
@@ -838,7 +979,7 @@ app.get('/leave-calendar', async (c) => {
           end_date: req.end_date,
           type: req.type,
           sub_type: req.sub_type,
-          status: req.status,
+          status: req.status,   // ← included so frontend can style pending vs approved
         };
       })
     );
@@ -961,6 +1102,136 @@ app.patch('/update-employee-hire-date', async (c) => {
   } catch (error) {
     console.error('Error updating hire date:', error);
     return c.json({ success: false, message: 'Server error updating hire date' }, 500);
+  }
+});
+
+/**
+ * PATCH /manager/employees/:id
+ * Update non-sensitive employee fields (requires can_edit_employee_info permission).
+ * BLOCKED: salary, role, company_id, can_approve_requests, password.
+ * CONDITIONALLY ALLOWED (if can_edit_financial_info): iban, bank_name.
+ */
+app.patch('/employees/:id', async (c) => {
+  try {
+    const employeeId = c.req.param('id');
+    const body = await c.req.json();
+    const { manager_id, ...fields } = body;
+
+    if (!manager_id) return c.json({ success: false, message: 'manager_id is required' }, 400);
+
+    const manager = await verifyManagerPermission(manager_id);
+    if (!manager) return c.json({ success: false, message: 'Unauthorized' }, 403);
+
+    const permissions = await kv.get('hr_permissions');
+    if (!permissions?.can_edit_employee_info) {
+      return c.json({ success: false, message: 'Permission denied: Employee info editing is not enabled by admin' }, 403);
+    }
+
+    const employee = await kv.get(`employee:${employeeId}`);
+    if (!employee) return c.json({ success: false, message: 'Employee not found' }, 404);
+
+    // Always block: salary, role, company_id, can_approve_requests, password, temporary_password
+    const { salary: _s, role: _r, company_id: _c,
+            can_approve_requests: _cap, password: _p, temporary_password: _tp, ...restFields } = fields;
+
+    // Conditionally allow iban and bank_name if can_edit_financial_info is enabled
+    let safeFields = restFields;
+    if (!permissions?.can_edit_financial_info) {
+      // Strip out financial fields if permission not granted
+      const { iban: _i, bank_name: _b, ...nonFinancialFields } = restFields;
+      safeFields = nonFinancialFields;
+    }
+
+    const nowISO = new Date().toISOString();
+    const updatedEmployee = { ...employee, ...safeFields, updated_at: nowISO };
+    await kv.set(`employee:${employeeId}`, updatedEmployee);
+
+    const logId = `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    await kv.set(`admin_log:${logId}`, {
+      id: logId, timestamp: nowISO, action: 'hr_update_employee',
+      performed_by: manager_id, performed_by_name: manager.full_name || 'HR Manager',
+      target_employee: employeeId, target_employee_name: employee.full_name,
+      details: { updated_fields: Object.keys(safeFields) }
+    });
+
+    console.log(`✅ HR update employee ${employeeId} by ${manager.full_name}: [${Object.keys(safeFields).join(', ')}]`);
+    return c.json({ success: true, employee: sanitizeEmployee(updatedEmployee) });
+  } catch (error) {
+    console.error('HR update employee error:', error);
+    return c.json({ success: false, message: `Server error: ${error}` }, 500);
+  }
+});
+
+/**
+ * GET /manager/leave-balances/:employeeId
+ * Compute leave balance for an employee (manager-accessible, no admin token needed).
+ */
+app.get('/leave-balances/:employeeId', async (c) => {
+  try {
+    const employeeId = c.req.param('employeeId');
+    const employee = await kv.get(`employee:${employeeId}`);
+    if (!employee) return c.json({ success: false, message: 'Employee not found' }, 404);
+
+    const hireDateStr = employee.hire_date || new Date().toISOString();
+    const fyKey = getFinancialYearKey(hireDateStr);
+
+    const hireDate = new Date(hireDateStr);
+    const today = new Date();
+    const anniversaryThisYear = new Date(today.getFullYear(), hireDate.getMonth(), hireDate.getDate());
+    const fyStartDate = today >= anniversaryThisYear
+      ? new Date(today.getFullYear(), hireDate.getMonth(), hireDate.getDate())
+      : new Date(today.getFullYear() - 1, hireDate.getMonth(), hireDate.getDate());
+    const fyEndDate = new Date(fyStartDate);
+    fyEndDate.setFullYear(fyEndDate.getFullYear() + 1);
+
+    const allRequests = await getValuesByPrefix('request:');
+    const empRequests = allRequests.filter((r: any) =>
+      r && r.employee_id?.toString() === employeeId.toString() && r.type === 'leave'
+    );
+
+    const calcDaysForType = (subType: string, status: string) =>
+      empRequests
+        .filter((r: any) => {
+          if (r.sub_type !== subType || r.status !== status) return false;
+          const refDate = new Date(r.start_date || r.created_at);
+          return refDate >= fyStartDate && refDate < fyEndDate;
+        })
+        .reduce((acc: number, r: any) => {
+          if (!r.start_date || !r.end_date) return acc;
+          return acc + calcLeaveDays(r.start_date, r.end_date);
+        }, 0);
+
+    const adjustmentKey = `leave_adjustments:${employeeId}:${fyKey}`;
+    const adjustments = (await kv.get(adjustmentKey)) || {};
+    const DEFAULTS: Record<string, number> = { annual: 30, sick: 14, emergency: 5, unpaid: 30 };
+
+    const balances: any = {};
+    for (const type of ['annual', 'sick', 'emergency', 'unpaid']) {
+      const adj = adjustments[type] || { amount: 0, history: [] };
+      const allowance = DEFAULTS[type];
+      const approved = calcDaysForType(type, 'approved');
+      const pending = calcDaysForType(type, 'pending');
+      const cancelled = calcDaysForType(type, 'cancelled');
+      const adjustment = typeof adj.amount === 'number' ? adj.amount : 0;
+      const available = Math.max(0, allowance + adjustment - approved - pending);
+      balances[type] = { allowance, approved, pending, cancelled, adjustment, adjustmentHistory: adj.history || [], available };
+    }
+
+    let annualEligible = true;
+    let eligibleDate: string | null = null;
+    if (employee.hire_date) {
+      const hire = new Date(employee.hire_date);
+      const elig = new Date(hire);
+      elig.setFullYear(elig.getFullYear() + 1);
+      const now = new Date(); now.setHours(0,0,0,0); elig.setHours(0,0,0,0);
+      annualEligible = now >= elig;
+      if (!annualEligible) eligibleDate = elig.toISOString().split('T')[0];
+    }
+
+    return c.json({ success: true, employee: sanitizeEmployee(employee), financialYear: fyKey, annualEligible, eligibleDate, balances });
+  } catch (error) {
+    console.error('Manager leave balance error:', error);
+    return c.json({ success: false, message: `Error fetching leave balances: ${error}` }, 500);
   }
 });
 
@@ -1100,6 +1371,192 @@ app.post('/cancel-request', async (c) => {
     });
   } catch (error) {
     console.error('Manager cancel-request error:', error);
+    return c.json({ success: false, message: `Server error: ${error}` }, 500);
+  }
+});
+
+// ==================== HR ANNOUNCEMENT MANAGEMENT ====================
+
+/**
+ * GET /manager/hr-announcements?employee_id=xxx
+ * List all announcements (HR/manager view — same data as admin reads)
+ */
+app.get('/hr-announcements', async (c) => {
+  try {
+    const employeeId = c.req.query('employee_id');
+    const manager = await verifyManagerPermission(employeeId);
+    if (!manager) return c.json({ success: false, message: 'Access denied' }, 403);
+
+    // Check can_post_announcements permission
+    const permissions = await kv.get('hr_permissions') || {};
+    if (!permissions.can_post_announcements) {
+      return c.json({ success: false, message: 'Announcement posting permission not enabled by admin' }, 403);
+    }
+
+    const all = await getValuesByPrefix('announcement:');
+    const announcements = all
+      .filter((a: any) => a && !a.deleted_at)
+      .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return c.json({ success: true, announcements });
+  } catch (error) {
+    console.error('HR announcements list error:', error);
+    return c.json({ success: false, message: `Server error: ${error}` }, 500);
+  }
+});
+
+/**
+ * POST /manager/hr-announcements
+ * Create a new announcement (requires can_post_announcements permission)
+ */
+app.post('/hr-announcements', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { created_by_employee_id, title, title_ar, message, message_ar, priority, company_ids, pinned, delivery_channel } = body;
+
+    if (!title || !message) return c.json({ success: false, message: 'Title and message are required' }, 400);
+
+    const manager = await verifyManagerPermission(created_by_employee_id);
+    if (!manager) return c.json({ success: false, message: 'Access denied' }, 403);
+
+    // Check permission
+    const permissions = await kv.get('hr_permissions') || {};
+    if (!permissions.can_post_announcements) {
+      return c.json({ success: false, message: 'Announcement posting permission not enabled by admin' }, 403);
+    }
+
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const announcement = {
+      id,
+      title,
+      title_ar: title_ar || null,
+      message,
+      message_ar: message_ar || null,
+      priority: priority || 'info',
+      company_ids: company_ids || [],
+      pinned: pinned || false,
+      delivery_channel: delivery_channel || 'system',
+      created_by: `hr:${created_by_employee_id}`,
+      created_by_name: manager.full_name || 'HR Manager',
+      created_at: now,
+      updated_at: now,
+    };
+
+    await kv.set(`announcement:${id}`, announcement);
+
+    // Create notifications for employees
+    const allEmployees = await getValuesByPrefix('employee:');
+    let notified = 0;
+    for (const emp of allEmployees) {
+      if (emp.deleted_at || !emp.id) continue;
+      if (company_ids && company_ids.length > 0 && !company_ids.includes(emp.company_id)) continue;
+      const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      await kv.set(`notification:${notifId}`, {
+        id: notifId,
+        employee_id: emp.id,
+        title: title,
+        title_ar: title_ar || title,
+        message: message,
+        message_ar: message_ar || message,
+        type: 'announcement',
+        read: false,
+        created_at: now,
+        metadata: { announcement_id: id, priority: priority || 'info' }
+      });
+      notified++;
+    }
+
+    console.log(`✅ HR announcement created by employee ${created_by_employee_id}: ${id} — notified ${notified} employees`);
+    return c.json({ success: true, announcement, notified });
+  } catch (error) {
+    console.error('HR announcement create error:', error);
+    return c.json({ success: false, message: `Server error: ${error}` }, 500);
+  }
+});
+
+/**
+ * PATCH /manager/hr-announcements/:id
+ * Update an announcement (HR)
+ */
+app.patch('/hr-announcements/:id', async (c) => {
+  try {
+    const announcementId = c.req.param('id');
+    const body = await c.req.json();
+    const { employee_id, ...updates } = body;
+
+    const manager = await verifyManagerPermission(employee_id);
+    if (!manager) return c.json({ success: false, message: 'Access denied' }, 403);
+
+    const permissions = await kv.get('hr_permissions') || {};
+    if (!permissions.can_post_announcements) {
+      return c.json({ success: false, message: 'Announcement posting permission not enabled by admin' }, 403);
+    }
+
+    const announcement = await kv.get(`announcement:${announcementId}`);
+    if (!announcement) return c.json({ success: false, message: 'Announcement not found' }, 404);
+
+    const updated = { ...announcement, ...updates, updated_at: new Date().toISOString() };
+    await kv.set(`announcement:${announcementId}`, updated);
+    return c.json({ success: true, announcement: updated });
+  } catch (error) {
+    console.error('HR announcement update error:', error);
+    return c.json({ success: false, message: `Server error: ${error}` }, 500);
+  }
+});
+
+/**
+ * DELETE /manager/hr-announcements/:id?employee_id=xxx
+ * Delete an announcement (HR)
+ */
+app.delete('/hr-announcements/:id', async (c) => {
+  try {
+    const announcementId = c.req.param('id');
+    const employeeId = c.req.query('employee_id');
+
+    const manager = await verifyManagerPermission(employeeId);
+    if (!manager) return c.json({ success: false, message: 'Access denied' }, 403);
+
+    const permissions = await kv.get('hr_permissions') || {};
+    if (!permissions.can_post_announcements) {
+      return c.json({ success: false, message: 'Announcement posting permission not enabled by admin' }, 403);
+    }
+
+    const announcement = await kv.get(`announcement:${announcementId}`);
+    if (!announcement) return c.json({ success: false, message: 'Announcement not found' }, 404);
+
+    await kv.del(`announcement:${announcementId}`);
+    console.log(`HR announcement deleted by employee ${employeeId}: ${announcementId}`);
+    return c.json({ success: true, message: 'Announcement deleted' });
+  } catch (error) {
+    console.error('HR announcement delete error:', error);
+    return c.json({ success: false, message: `Server error: ${error}` }, 500);
+  }
+});
+
+/**
+ * GET /manager/hr-announcements/:id/receipts?employee_id=xxx
+ * Read receipts for an announcement (HR)
+ */
+app.get('/hr-announcements/:id/receipts', async (c) => {
+  try {
+    const announcementId = c.req.param('id');
+    const employeeId = c.req.query('employee_id');
+
+    const manager = await verifyManagerPermission(employeeId);
+    if (!manager) return c.json({ success: false, message: 'Access denied' }, 403);
+
+    const allReceipts = await getValuesByPrefix(`read_receipt:${announcementId}:`);
+    const enriched = await Promise.all(allReceipts.map(async (r: any) => {
+      const emp = await kv.get(`employee:${r.employee_id}`);
+      return {
+        ...r,
+        employee_name: emp?.full_name || r.employee_name || 'Unknown',
+        employee_name_ar: emp?.full_name_ar || r.employee_name_ar || null,
+      };
+    }));
+    return c.json({ success: true, receipts: enriched });
+  } catch (error) {
+    console.error('HR receipts error:', error);
     return c.json({ success: false, message: `Server error: ${error}` }, 500);
   }
 });

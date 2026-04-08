@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   ArrowLeft, Upload, Clock, Calendar, Stethoscope, BanknoteIcon,
-  AlertCircle, CheckCircle2, Info, ChevronRight, RefreshCw, Lock
+  AlertCircle, CheckCircle2, Info, ChevronRight, RefreshCw, Lock,
+  Plane, Gift, ArrowRight, X, MapPin
 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -15,6 +16,7 @@ import { projectId, publicAnonKey } from '../utils/supabase/info';
 interface LeaveRequestProps {
   onBack: () => void;
   onSuccess: () => void;
+  onNavigateToTickets?: () => void;   // optional — navigate to Annual Tickets section
 }
 
 interface LeaveUsage {
@@ -28,6 +30,12 @@ interface LeaveUsage {
   unpaid_pending: number;
   hourly_used_this_month: number;
   hourly_pending_this_month: number;
+}
+
+interface TicketStatus {
+  applied: boolean;
+  requestId?: string;
+  status?: string;   // 'pending' | 'approved' | 'rejected' | 'cancelled'
 }
 
 const LIMITS = {
@@ -99,10 +107,11 @@ function calcDays(start: string, end: string): number {
   return Math.max(0, Math.floor((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24)) + 1);
 }
 
-export function LeaveRequest({ onBack, onSuccess }: LeaveRequestProps) {
+export function LeaveRequest({ onBack, onSuccess, onNavigateToTickets }: LeaveRequestProps) {
   const { t } = useLanguage();
   const { employee } = useAuth();
 
+  // ── Leave form state ───────────────────────────────────────────────────────
   const [leaveType, setLeaveType] = useState<string>('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -113,6 +122,19 @@ export function LeaveRequest({ onBack, onSuccess }: LeaveRequestProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [usage, setUsage] = useState<LeaveUsage | null>(null);
   const [loadingUsage, setLoadingUsage] = useState(true);
+
+  // ── Post-submit ticket prompt state ───────────────────────────────────────
+  const [submittedLeave, setSubmittedLeave] = useState<{
+    startDate: string; endDate: string; requestId: string;
+  } | null>(null);
+  const [ticketStatus, setTicketStatus] = useState<TicketStatus | null>(null);
+  const [isCheckingTicket, setIsCheckingTicket] = useState(false);
+  const [ticketDateMode, setTicketDateMode] = useState<'use_leave' | 'custom'>('use_leave');
+  const [ticketTravelDate, setTicketTravelDate] = useState('');
+  const [ticketReturnDate, setTicketReturnDate] = useState('');
+  const [ticketDestination, setTicketDestination] = useState('');
+  const [ticketNotes, setTicketNotes] = useState('');
+  const [isSubmittingTicket, setIsSubmittingTicket] = useState(false);
 
   useEffect(() => {
     if (employee?.id) fetchUsage();
@@ -208,7 +230,7 @@ export function LeaveRequest({ onBack, onSuccess }: LeaveRequestProps) {
   // ── Annual leave eligibility: must complete 1 year from hire date ─────────
   const annualLeaveEligibility = useMemo(() => {
     const hireDate = employee?.hire_date;
-    if (!hireDate) return { eligible: true, eligibleDate: null, daysRemaining: 0 }; // No hire date = allow (admin hasn't set it)
+    if (!hireDate) return { eligible: true, eligibleDate: null, daysRemaining: 0 };
     const hire = new Date(hireDate);
     const eligibleDate = new Date(hire);
     eligibleDate.setFullYear(eligibleDate.getFullYear() + 1);
@@ -232,6 +254,25 @@ export function LeaveRequest({ onBack, onSuccess }: LeaveRequestProps) {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files?.[0]) setMedicalReport(e.target.files[0]);
+  };
+
+  // ── Check annual ticket status (used after annual leave is submitted) ──────
+  const checkTicketStatus = async () => {
+    setIsCheckingTicket(true);
+    try {
+      const year = new Date().getFullYear();
+      const res = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-fdcde35a/employee/${employee!.id}/annual-ticket-status?year=${year}`,
+        { headers: { Authorization: `Bearer ${publicAnonKey}` } }
+      );
+      const data = await res.json();
+      setTicketStatus(data);
+    } catch (e) {
+      console.error('Error checking ticket status:', e);
+      setTicketStatus({ applied: false });
+    } finally {
+      setIsCheckingTicket(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -320,18 +361,83 @@ export function LeaveRequest({ onBack, onSuccess }: LeaveRequestProps) {
       );
       const data = await res.json();
       if (data.success) {
-        toast.success(t('Leave request submitted successfully!', 'تم تقديم طلب الإجازة بنجاح!'));
-        onSuccess();
+        // ── Annual leave: show ticket prompt before navigating away ──────────
+        if (leaveType === 'annual') {
+          toast.success(t('Annual leave request submitted!', 'تم تقديم طلب الإجازة السنوية!'));
+          setSubmittedLeave({
+            startDate,
+            endDate,
+            requestId: data.request?.id || '',
+          });
+          await checkTicketStatus();
+        } else {
+          toast.success(t('Leave request submitted successfully!', 'تم تقديم طلب الإجازة بنجاح!'));
+          onSuccess();
+        }
       } else {
-        // Show server-provided error (e.g. annual leave eligibility)
         const msg = data.message || data.messageAr;
-        toast.error(msg || t('Failed to submit request. Please try again.', 'ف��ل تقديم الطلب. يرجى المحاولة مرة أخرى.'));
+        toast.error(msg || t('Failed to submit request. Please try again.', 'فشل تقديم الطلب. يرجى المحاولة مرة أخرى.'));
       }
     } catch (err) {
       console.error(err);
       toast.error(t('Failed to submit request. Please try again.', 'فشل تقديم الطلب. يرجى المحاولة مرة أخرى.'));
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // ── Submit annual ticket request (linked to the leave) ────────────────────
+  const handleSubmitTicket = async () => {
+    if (!submittedLeave) return;
+    const travelDate = ticketDateMode === 'use_leave' ? submittedLeave.startDate : ticketTravelDate;
+    const returnDate = ticketDateMode === 'use_leave' ? submittedLeave.endDate  : ticketReturnDate;
+
+    if (ticketDateMode === 'custom' && (!travelDate || !returnDate)) {
+      toast.error(t('Please enter travel and return dates', 'يرجى إدخال تاريخ السفر والعودة'));
+      return;
+    }
+    if (ticketDateMode === 'custom' && new Date(returnDate) < new Date(travelDate)) {
+      toast.error(t('Return date must be after travel date', 'تاريخ العودة يجب أن يكون بعد تاريخ السفر'));
+      return;
+    }
+
+    setIsSubmittingTicket(true);
+    try {
+      const res = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-fdcde35a/requests`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+          body: JSON.stringify({
+            employee_id: employee?.id,
+            type: 'ticket',
+            sub_type: 'annual_ticket',
+            travel_date: travelDate,
+            return_date: returnDate,
+            start_date: travelDate,
+            end_date: returnDate,
+            destination: ticketDestination || employee?.nationality || '',
+            notes: ticketNotes
+              ? ticketNotes
+              : `Linked to annual leave request ${submittedLeave.requestId.substring(0, 8).toUpperCase()}`,
+            linked_leave_request_id: submittedLeave.requestId,
+            status: 'pending',
+          }),
+        }
+      );
+      const data = await res.json();
+      if (data.success) {
+        toast.success(t('Annual ticket request submitted!', 'تم تقديم طلب التذكرة السنوية!'));
+        onSuccess();
+      } else {
+        const msg = data.message || data.messageAr;
+        toast.error(msg || t('Failed to submit ticket request', 'فشل تقديم طلب التذكرة'));
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error(t('Failed to submit ticket request', 'فشل تقديم طلب التذكرة'));
+    } finally {
+      setIsSubmittingTicket(false);
     }
   };
 
@@ -345,6 +451,282 @@ export function LeaveRequest({ onBack, onSuccess }: LeaveRequestProps) {
     return null;
   };
 
+  // ── Post-submit ticket prompt screen ─────────────────────────────────────
+  if (submittedLeave) {
+    const ticketTravelFinal = ticketDateMode === 'use_leave' ? submittedLeave.startDate : ticketTravelDate;
+    const ticketReturnFinal = ticketDateMode === 'use_leave' ? submittedLeave.endDate  : ticketReturnDate;
+    const dayCount = calcDays(submittedLeave.startDate, submittedLeave.endDate);
+    const shortId = submittedLeave.requestId ? submittedLeave.requestId.substring(0, 8).toUpperCase() : '—';
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-background via-background to-teal-500/5 py-6 sm:py-8">
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 space-y-5">
+
+          {/* ── Annual Leave Confirmation Card ── */}
+          <div className="rounded-2xl border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/20 shadow-sm overflow-hidden">
+            {/* Green header strip */}
+            <div className="bg-emerald-600 dark:bg-emerald-700 px-5 py-4 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <p className="font-bold text-white text-base">
+                  {t('Annual Leave Request Submitted', 'تم تقديم طلب الإجازة السنوية')}
+                </p>
+                <p className="text-emerald-100 text-xs mt-0.5">
+                  {t('Your request is now pending approval from HR', 'طلبك الآن بانتظار موافقة الموارد البشرية')}
+                </p>
+              </div>
+            </div>
+            {/* Details grid */}
+            <div className="p-5 space-y-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { label: t('Request ID', 'رقم الطلب'), value: `#${shortId}`, bold: true },
+                  { label: t('Duration', 'المدة'), value: `${dayCount} ${t('days', 'أيام')}`, bold: true },
+                  { label: t('From', 'من'), value: submittedLeave.startDate },
+                  { label: t('To', 'إلى'), value: submittedLeave.endDate },
+                ].map(item => (
+                  <div key={item.label} className="bg-white dark:bg-slate-800/60 rounded-xl p-3 border border-emerald-100 dark:border-emerald-800/50">
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium">{item.label}</p>
+                    <p className={`text-sm mt-1 ${item.bold ? 'font-bold text-emerald-700 dark:text-emerald-400' : 'font-medium'}`}>{item.value}</p>
+                  </div>
+                ))}
+              </div>
+              {/* Status badge row */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                  {t('Pending Approval', 'بانتظار الموافقة')}
+                </span>
+                <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                  {t('A confirmation email has been sent to you.', 'تم إرسال بريد إلكتروني تأكيدي إليك.')}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Ticket prompt ── */}
+          {isCheckingTicket ? (
+            <div className="rounded-2xl border border-border/50 bg-card p-8 flex items-center justify-center gap-3">
+              <RefreshCw className="w-5 h-5 text-muted-foreground animate-spin" />
+              <span className="text-sm text-muted-foreground">{t('Checking your annual ticket status…', 'جاري التحقق من حالة تذكرتك السنوية…')}</span>
+            </div>
+          ) : ticketStatus?.applied ? (
+            /* ── Already applied / active ticket ── */
+            <div className="rounded-2xl border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/20 p-5">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-sky-100 dark:bg-sky-900/40 flex items-center justify-center shrink-0">
+                  <Plane className="w-5 h-5 text-sky-600 dark:text-sky-400" />
+                </div>
+                <div>
+                  <p className="font-bold text-sky-800 dark:text-sky-300">
+                    {t('You Already Have an Annual Ticket Request', 'لديك طلب تذكرة سنوية مسبق')}
+                  </p>
+                  <p className="text-sm text-sky-700 dark:text-sky-400 mt-0.5">
+                    {ticketStatus.status === 'approved'
+                      ? t('Your annual ticket for this year has been approved.', 'تمت الموافقة على تذكرتك السنوية لهذا العام.')
+                      : ticketStatus.status === 'pending'
+                      ? t('Your annual ticket request is pending approval.', 'طلب تذكرتك السنوية قيد المراجعة.')
+                      : t('Your annual ticket request has been processed.', 'تمت معالجة طلب تذكرتك السنوية.')}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end">
+                <Button variant="outline" onClick={onSuccess}>
+                  {t('Done', 'تم')}
+                </Button>
+                {onNavigateToTickets && (
+                  <Button
+                    onClick={onNavigateToTickets}
+                    className="bg-sky-600 hover:bg-sky-700 text-white gap-2"
+                  >
+                    <Plane className="w-4 h-4" />
+                    {t('View My Tickets', 'عرض تذاكري')}
+                    <ArrowRight className="w-4 h-4" />
+                  </Button>
+                )}
+                {!onNavigateToTickets && (
+                  <Button onClick={onSuccess} className="bg-sky-600 hover:bg-sky-700 text-white">
+                    {t('Go to My Requests', 'الانتقال إلى طلباتي')}
+                  </Button>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* ── No ticket yet — offer to request one ── */
+            <div className="rounded-2xl border border-border/50 bg-card shadow-sm overflow-hidden">
+              {/* Header */}
+              <div className="bg-gradient-to-r from-teal-600 to-teal-700 p-5 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                  <Gift className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <p className="font-bold text-white">{t('Request Your Annual Ticket Benefit', 'اطلب مزية التذكرة السنوية')}</p>
+                  <p className="text-sm text-teal-100">
+                    {t('You have not used your annual ticket for this year. Would you like to request it now?',
+                       'لم تستخدم تذكرتك السنوية لهذا العام. هل تريد طلبها الآن؟')}
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-5 space-y-5">
+                {/* Date mode selector */}
+                <div>
+                  <Label className="text-sm font-semibold mb-3 block">
+                    {t('Travel Date Option', 'خيار تاريخ السفر')}
+                  </Label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setTicketDateMode('use_leave')}
+                      className={`p-3 rounded-xl border-2 text-start transition-all ${
+                        ticketDateMode === 'use_leave'
+                          ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/20'
+                          : 'border-border bg-muted/30 hover:border-teal-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        {ticketDateMode === 'use_leave'
+                          ? <CheckCircle2 className="w-4 h-4 text-teal-600" />
+                          : <div className="w-4 h-4 rounded-full border-2 border-muted-foreground" />}
+                        <span className="text-xs font-semibold text-teal-700 dark:text-teal-400">
+                          {t('Use Leave Dates', 'استخدام تواريخ الإجازة')}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        {t(`${submittedLeave.startDate} → ${submittedLeave.endDate}`,
+                           `${submittedLeave.startDate} ← ${submittedLeave.endDate}`)}
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setTicketDateMode('custom')}
+                      className={`p-3 rounded-xl border-2 text-start transition-all ${
+                        ticketDateMode === 'custom'
+                          ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/20'
+                          : 'border-border bg-muted/30 hover:border-teal-400'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        {ticketDateMode === 'custom'
+                          ? <CheckCircle2 className="w-4 h-4 text-teal-600" />
+                          : <div className="w-4 h-4 rounded-full border-2 border-muted-foreground" />}
+                        <span className="text-xs font-semibold text-teal-700 dark:text-teal-400">
+                          {t('Custom Dates', 'تواريخ مخصصة')}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        {t('Override with different travel dates', 'تجاوز بتواريخ سفر مختلفة')}
+                      </p>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Custom date inputs */}
+                {ticketDateMode === 'custom' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <Label className="mb-2 block text-sm">
+                        {t('Travel Date', 'تاريخ السفر')} <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        type="date"
+                        value={ticketTravelDate}
+                        onChange={(e) => setTicketTravelDate(e.target.value)}
+                        className="h-11"
+                        min={new Date().toISOString().split('T')[0]}
+                      />
+                    </div>
+                    <div>
+                      <Label className="mb-2 block text-sm">
+                        {t('Return Date', 'تاريخ العودة')} <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        type="date"
+                        value={ticketReturnDate}
+                        onChange={(e) => setTicketReturnDate(e.target.value)}
+                        className="h-11"
+                        min={ticketTravelDate || new Date().toISOString().split('T')[0]}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Destination */}
+                <div>
+                  <Label className="mb-2 block text-sm">
+                    <MapPin className="w-3.5 h-3.5 inline me-1" />
+                    {t('Destination / Home Country', 'الوجهة / بلد الموطن')}
+                  </Label>
+                  <Input
+                    value={ticketDestination}
+                    onChange={(e) => setTicketDestination(e.target.value)}
+                    placeholder={employee?.nationality || t('e.g., Egypt, India, Philippines…', 'مثال: مصر، الهند، الفلبين…')}
+                    className="h-11"
+                  />
+                </div>
+
+                {/* Notes */}
+                <div>
+                  <Label className="mb-2 block text-sm">{t('Notes (Optional)', 'ملاحظات (اختياري)')}</Label>
+                  <Textarea
+                    value={ticketNotes}
+                    onChange={(e) => setTicketNotes(e.target.value)}
+                    placeholder={t('Any special requests or preferences…', 'أي طلبات أو تفضيلات خاصة…')}
+                    rows={2}
+                  />
+                </div>
+
+                {/* Preview summary */}
+                <div className="rounded-xl bg-teal-50 dark:bg-teal-950/20 border border-teal-200 dark:border-teal-800 p-3 flex items-center gap-3">
+                  <Plane className="w-4 h-4 text-teal-600 shrink-0" />
+                  <div className="text-sm text-teal-800 dark:text-teal-300">
+                    <span className="font-semibold">{t('Travel:', 'سفر:')}</span>{' '}
+                    {ticketDateMode === 'use_leave'
+                      ? `${submittedLeave.startDate} → ${submittedLeave.endDate}`
+                      : ticketTravelDate && ticketReturnDate
+                      ? `${ticketTravelDate} → ${ticketReturnDate}`
+                      : t('—  Enter dates above', '— أدخل التواريخ أعلاه')}
+                    {ticketDestination && <span className="ms-2 text-teal-600">· {ticketDestination}</span>}
+                  </div>
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex flex-col-reverse sm:flex-row justify-between gap-3 pt-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={onSuccess}
+                    className="text-muted-foreground"
+                  >
+                    <X className="w-4 h-4 me-1.5" />
+                    {t('Skip — Request Later', 'تخطي — طلب لاحقاً')}
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={handleSubmitTicket}
+                    disabled={isSubmittingTicket || (ticketDateMode === 'custom' && (!ticketTravelDate || !ticketReturnDate))}
+                    className="bg-teal-600 hover:bg-teal-700 text-white gap-2 h-11 px-6"
+                  >
+                    {isSubmittingTicket ? (
+                      <><RefreshCw className="w-4 h-4 animate-spin" />{t('Submitting…', 'جاري الإرسال…')}</>
+                    ) : (
+                      <><Plane className="w-4 h-4" />{t('Submit Ticket Request', 'تقديم طلب التذكرة')}<ChevronRight className="w-4 h-4" /></>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Main leave request form ───────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-violet-500/5 py-6 sm:py-8">
       <div className="max-w-2xl mx-auto px-4 sm:px-6">
@@ -397,7 +779,6 @@ export function LeaveRequest({ onBack, onSuccess }: LeaveRequestProps) {
                         : { borderColor: 'var(--border)', backgroundColor: 'var(--muted)' }
                     }
                   >
-                    {/* Lock overlay for ineligible annual leave */}
                     {isAnnualLocked && (
                       <div className="absolute top-2 end-2">
                         <Lock className="w-4 h-4 text-muted-foreground" />
@@ -464,8 +845,8 @@ export function LeaveRequest({ onBack, onSuccess }: LeaveRequestProps) {
                   </p>
                   <p className="text-sm text-sky-700 dark:text-sky-400 leading-relaxed">
                     {t(
-                      `Per Saudi Labor Law (Article 109), annual leave eligibility begins after completing one full year of service. You will be eligible on ${annualLeaveEligibility.eligibleDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} — only ${annualLeaveEligibility.daysRemaining} days away! In the meantime, you can still request other leave types.`,
-                      `وفقاً لنظام العمل السعودي (المادة 109)، يبدأ استحقاق الإجازة السنوية بعد إكمال سنة كاملة من الخدمة. ستكون مؤهلاً في ${annualLeaveEligibility.eligibleDate.toLocaleDateString('ar-SA', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} — بقي فقط ${annualLeaveEligibility.daysRemaining} يوم! في هذه الأثناء، يمكنك طلب أنواع الإجازات الأخرى.`
+                      `Per Saudi Labor Law (Article 109), annual leave eligibility begins after completing one full year of service. You will be eligible on ${annualLeaveEligibility.eligibleDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} — only ${annualLeaveEligibility.daysRemaining} days away!`,
+                      `وفقاً لنظام العمل السعودي (المادة 109)، يبدأ استحقاق الإجازة السنوية بعد إكمال سنة كاملة من الخدمة. ستكون مؤهلاً في ${annualLeaveEligibility.eligibleDate.toLocaleDateString('ar-SA', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} — بقي فقط ${annualLeaveEligibility.daysRemaining} يوم!`
                     )}
                   </p>
                 </div>
@@ -488,15 +869,15 @@ export function LeaveRequest({ onBack, onSuccess }: LeaveRequestProps) {
                     'الإجازة الساعية بحد أقصى 6 ساعات شهرياً. سيتم احتساب المدة تلقائياً من وقت البدء والانتهاء.'
                   )}
                   {leaveType === 'annual' && t(
-                    'Your annual balance is 30 days for all employees. Leave is automatically deducted upon approval.',
-                    'رصيدك السنوي 30 يوماً للجميع (القانون: 21 يوماً لمن أتم السنة، 30 لمن أتم 5 سنوات — نمنح 30 يوماً للجميع). تُخصم الإجازة تلقائياً عند الموافقة.'
+                    'Your annual balance is 30 days. Leave is automatically deducted upon approval. After submitting, you will be offered the option to request your annual ticket benefit.',
+                    'رصيدك السنوي 30 يوماً. تُخصم الإجازة تلقائياً عند الموافقة. بعد الإرسال، ستُتاح لك خيار طلب مزية التذكرة السنوية.'
                   )}
                   {leaveType === 'sick' && t(
                     'Sick leave is 14 days/year per labor law. A medical report is required to complete the request.',
                     'الإجازة المرضية 14 يوماً سنوياً وفق نظام العمل. يُشترط إرفاق التقرير الطبي لإتمام الطلب.'
                   )}
                   {leaveType === 'emergency' && t(
-                    'Emergency leave is 5 days/year per Saudi Labor Law (Article 113). You must provide a reason for the emergency.',
+                    'Emergency leave is 5 days/year per Saudi Labor Law (Article 113). You must provide a reason.',
                     'الإجازة الطارئة 5 أيام سنوياً وفق نظام العمل السعودي (المادة 113). يجب ذكر سبب الحالة الطارئة.'
                   )}
                   {leaveType === 'unpaid' && t(
@@ -579,7 +960,7 @@ export function LeaveRequest({ onBack, onSuccess }: LeaveRequestProps) {
                       </div>
                     )}
 
-                    {/* ── 30-day soft warning for annual leave ─────────────────── */}
+                    {/* 30-day soft warning */}
                     {isWithin30Days && (
                       <div className="rounded-xl p-4 flex items-start gap-3 border border-amber-200 bg-amber-50 dark:border-amber-800/50 dark:bg-amber-950/20">
                         <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
@@ -589,8 +970,8 @@ export function LeaveRequest({ onBack, onSuccess }: LeaveRequestProps) {
                           </p>
                           <p className="text-sm text-amber-700 dark:text-amber-400 leading-relaxed">
                             {t(
-                              'Annual leave requests are typically submitted at least 30 days in advance. Your selected start date is less than 30 days from today. You may still submit this request, but approval may take longer.',
-                              'يُنصح بتقديم طلبات الإجازة السنوية قبل 30 يوماً على الأقل. تاريخ البدء الذي اخترته أقل من 30 يوماً من اليوم. يمكنك تقديم الطلب، لكن قد يستغرق الاعتماد وقتاً أطول.'
+                              'Annual leave requests are typically submitted at least 30 days in advance. You may still submit, but approval may take longer.',
+                              'يُنصح بتقديم طلبات الإجازة السنوية قبل 30 يوماً على الأقل. يمكنك التقديم، لكن قد يستغرق الاعتماد وقتاً أطول.'
                             )}
                           </p>
                         </div>
@@ -655,6 +1036,19 @@ export function LeaveRequest({ onBack, onSuccess }: LeaveRequestProps) {
                   </div>
                 )}
               </div>
+
+              {/* Annual ticket hint */}
+              {leaveType === 'annual' && (
+                <div className="rounded-xl p-3 flex items-center gap-3 border border-teal-200 bg-teal-50 dark:border-teal-800/50 dark:bg-teal-950/20">
+                  <Gift className="w-4 h-4 text-teal-600 dark:text-teal-400 shrink-0" />
+                  <p className="text-xs text-teal-700 dark:text-teal-300">
+                    {t(
+                      'After submitting your leave request, you will be able to request your annual ticket benefit with these dates or custom travel dates.',
+                      'بعد تقديم طلب الإجازة، ستتمكن من طلب مزية التذكرة السنوية بهذه التواريخ أو تواريخ سفر مخصصة.'
+                    )}
+                  </p>
+                </div>
+              )}
             </>
           )}
 

@@ -18,7 +18,8 @@ import {
   FolderOpen,
   Shield,
   Calculator,
-  Crown
+  Crown,
+  AlertTriangle,
 } from 'lucide-react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -69,6 +70,7 @@ export function ManagerLayout({ children, activePage, onNavigate, pendingCount =
     { id: 'requests', label: t('Team Requests', 'طلبات الفريق'), icon: ClipboardCheck, badge: pendingCount },
     { id: 'employees', label: t('Team Members', 'أعضاء الفريق'), icon: Users },
     { id: 'calendar', label: t('Leave Calendar', 'تقويم الإجازات'), icon: CalendarDays },
+    { id: 'document-expiry', label: t('Document Expiry', 'انتهاء الوثائق'), icon: AlertTriangle },
     { id: 'announcements', label: t('Announcements', 'التعاميم'), icon: Megaphone },
     { id: 'documents', label: t('Documents', 'المستندات'), icon: FolderOpen },
     { id: 'profile', label: t('My Profile', 'ملفي الشخصي'), icon: UserCircle },

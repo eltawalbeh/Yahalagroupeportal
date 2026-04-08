@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Bell } from 'lucide-react';
+import { Bell, AlertTriangle } from 'lucide-react';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Badge } from './ui/badge';
@@ -150,8 +150,17 @@ export function NotificationBell() {
                           </span>
                         )}
                         {notification.type && (
-                          <Badge variant={notification.type === 'announcement_urgent' ? 'destructive' : 'secondary'} className="text-xs">
-                            {notification.type === 'announcement_urgent' ? t('Urgent', 'عاجل') : t('Announcement', 'إعلان')}
+                          <Badge variant={
+                            notification.type === 'announcement_urgent' ? 'destructive' :
+                            notification.type === 'doc_expiry' ? 'destructive' : 'secondary'
+                          } className="text-xs">
+                            {notification.type === 'announcement_urgent' ? t('Urgent', 'عاجل') :
+                             notification.type === 'doc_expiry' ? (
+                               <span className="flex items-center gap-1">
+                                 <AlertTriangle className="w-3 h-3" />
+                                 {t('Doc Expiry', 'وثيقة')}
+                               </span>
+                             ) : t('Announcement', 'إعلان')}
                           </Badge>
                         )}
                         <span className="text-xs text-muted-foreground">

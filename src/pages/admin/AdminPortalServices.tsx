@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useId } from 'react';
 import {
   Calendar,
   DollarSign,
@@ -112,6 +112,10 @@ export function AdminPortalServices({ requests = [], onNavigate }: AdminPortalSe
   const { t, language } = useLanguage();
   const [activeService, setActiveService] = useState<ServiceType>('all');
   const [showAll, setShowAll] = useState(false);
+
+  // Stable unique IDs per instance — prevents recharts internal SVG key collisions
+  const barChartUid = useId().replace(/:/g, '');
+  const pieChartUid = useId().replace(/:/g, '');
 
   // Per-service stats
   const serviceStats = useMemo(() => {
@@ -323,7 +327,7 @@ export function AdminPortalServices({ requests = [], onNavigate }: AdminPortalSe
           <CardContent className="h-[280px]">
             {totalRequests > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={monthlyData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                <BarChart id={`barchart-${barChartUid}`} data={monthlyData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
                   <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748b' }} />
                   <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748b' }} allowDecimals={false} />
@@ -367,7 +371,7 @@ export function AdminPortalServices({ requests = [], onNavigate }: AdminPortalSe
                 <div className="flex flex-col items-center gap-3">
                   <div className="h-[140px] w-full">
                     <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
+                      <PieChart id={`piechart-${pieChartUid}`}>
                         <Pie
                           data={pieData}
                           cx="50%"

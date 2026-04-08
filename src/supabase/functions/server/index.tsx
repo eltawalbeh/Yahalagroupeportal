@@ -2,7 +2,7 @@ import { Hono } from 'npm:hono';
 import { cors } from 'npm:hono/cors';
 import { logger } from 'npm:hono/logger';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-import * as kv from './kv_store.tsx';
+import * as kv from './kv-retry.tsx';
 import { sampleCompanies, sampleEmployees } from './seed.tsx';
 import { sendEmail, sendEmailWithCC, emailTemplates } from './email-service.tsx';
 import { generateTemporaryPassword, validatePassword, hashPassword, verifyPassword, isHashed, isLegacyHash } from './password-utils.tsx';
@@ -63,7 +63,7 @@ const ALLOWED_IMAGE_TYPES = new Set([
 app.use('*', cors({
   origin: '*',
   allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'X-Admin-Token'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Admin-Token', 'X-Employee-Id'],
 }));
 app.use('*', logger(console.log));
 
@@ -232,7 +232,7 @@ async function notifyOwnerForAnnualLeave(
         title: 'Exit Permission — At Your Expense',
         title_ar: 'تصريح الخروج — على نفقتك الخاصة',
         message: `Your annual leave has been approved. Note: Your company-covered exit permission for financial year ${fyKey} has already been issued. Any additional exit permission will be at your own expense.`,
-        message_ar: `تمت الموافقة على إجازتك السنوية. ملاحظة: تم إصدار تصريح الخروج المغطى من قِبَل الشركة للسنة المالية ${fyKey} مسبقاً. أي تصريح خروج إضافي سيكون على نفقتك الخاصة.`,
+        message_ar: `تمت الموافقة على إجازتك السنوية. ملا��ظة: تم إصدار تصريح الخروج المغطى من قِبَل الشركة للسنة المالية ${fyKey} مسبقاً. أي تصريح خروج إضافي سيكون على نفقتك الخاصة.`,
         type: 'exit_permission_own_expense',
         read: false,
         created_at: new Date().toISOString(),
@@ -406,7 +406,7 @@ app.post('/make-server-fdcde35a/auth/login', async (c) => {
       return c.json({ success: false, message: 'ID and password are required', messageAr: 'الرقم وكلمة المرور مطلوبان' }, 400);
     }
 
-    // ── Rate limiting ─────────────────────────────────────────────────────────
+    // ── Rate limiting ────���────────────────────────────────────────────────────
     if (!checkRateLimit(id)) {
       console.warn(`Rate limit exceeded for identifier: ${id.slice(0, 6)}***`);
       return c.json({
@@ -776,11 +776,59 @@ app.post('/make-server-fdcde35a/requests', async (c) => {
     
     await kv.set(`request:${requestId}`, request);
 
+    // ── Ticket request handling ────────────────────────────────────────────────
+    if (requestData.type === 'ticket') {
+      const thisYear = new Date().getFullYear();
+      // Annual ticket: check eligibility (1 year service) and track balance
+      if (requestData.sub_type === 'annual_ticket' && employee?.hire_date) {
+        const hireDate = new Date(employee.hire_date);
+        const eligibleDate = new Date(hireDate);
+        eligibleDate.setFullYear(eligibleDate.getFullYear() + 1);
+        const today = new Date(); today.setHours(0,0,0,0); eligibleDate.setHours(0,0,0,0);
+        // Check if they already used a ticket this year
+        const ticketBalKey = `ticket_balance:${requestData.employee_id}:${thisYear}`;
+        const ticketBal = (await kv.get(ticketBalKey)) || { used: 0, special_case_used: 0 };
+        if (ticketBal.used >= 1 && !requestData.is_special_case) {
+          return c.json({
+            success: false,
+            message: `Annual ticket for ${thisYear} has already been used. Contact HR for special cases.`,
+            messageAr: `تم استخدام التذكرة السنوية لعام ${thisYear} بالفعل. تواصل مع الموارد البشرية للحالات الخاصة.`,
+            code: 'TICKET_ALREADY_USED'
+          }, 403);
+        }
+        // If before eligibility → special case requiring Super Admin approval
+        if (today < eligibleDate) {
+          requestData.is_special_case = true;
+          requestData.special_case_reason = 'early_ticket_before_anniversary';
+          requestData.deduct_from_next_year = true;
+          requestData.notes = (requestData.notes ? requestData.notes + '\n' : '') +
+            `[Special Case] Ticket requested before annual eligibility date (${eligibleDate.toISOString().split('T')[0]}). Will be deducted from next year's balance.`;
+        }
+
+        // ── Set pre-booking applied flag (per financial year) ────────────────
+        const fyKey = getFinancialYearKey(employee.hire_date || new Date().toISOString());
+        const appliedKey = `annual_ticket_applied:${requestData.employee_id}:${fyKey}`;
+        await kv.set(appliedKey, {
+          applied: true,
+          requestId,
+          status: 'pending',
+          travel_date: requestData.travel_date || requestData.start_date || null,
+          return_date: requestData.return_date || requestData.end_date || null,
+          destination: requestData.destination || null,
+          applied_at: new Date().toISOString(),
+          financial_year: fyKey,
+        });
+        console.log(`✅ Annual ticket applied flag set for employee ${requestData.employee_id} FY ${fyKey}`);
+      }
+    }
+
     // Request type labels for emails
     const requestTypeLabels: Record<string, {en: string, ar: string}> = {
       leave: { en: 'Leave Request', ar: 'طلب إجازة' },
       advance: { en: 'Advance Request', ar: 'طلب سلفة' },
-      entry: { en: 'Entry Permission Request', ar: 'طلب خروج وعودة' }
+      entry: { en: 'Entry Permission Request', ar: 'طلب خروج وعودة' },
+      ticket: { en: 'Annual Ticket Request', ar: 'طلب تذكرة سنوية' },
+      reentry_visa: { en: 'Re-Entry Visa Request', ar: 'طلب تأشيرة خروج وعودة' }
     };
 
     const typeLabel = requestTypeLabels[requestData.type] || { en: 'Request', ar: 'طلب' };
@@ -858,10 +906,57 @@ app.post('/make-server-fdcde35a/requests', async (c) => {
         });
     }
 
-    // 3. Send notification to all admins
+    // 2b. For ticket and reentry_visa: also notify HR and Super Admin directly
+    if (requestData.type === 'ticket' || requestData.type === 'reentry_visa') {
+      try {
+        const allEmps = await getValuesByPrefix('employee:');
+        const hrList = allEmps.filter((e: any) => e.can_approve_requests && !e.deleted_at && e.email);
+        const shortId = requestId.substring(0, 8).toUpperCase();
+        const ticketDetails = `Employee: ${employee?.full_name || 'N/A'}\nDestination: ${requestData.destination || 'N/A'}\nTravel Date: ${requestData.travel_date || 'N/A'}\nNotes: ${requestData.notes || 'N/A'}${requestData.is_special_case ? '\n⚠️ SPECIAL CASE — requires Super Admin approval' : ''}`;
+        for (const hr of hrList) {
+          await sendEmail(hr.email, 'approvalNeeded', {
+            managerName: hr.full_name || 'HR',
+            employeeName: employee?.full_name || 'Employee',
+            requestType: typeLabel.en,
+            requestTypeAr: typeLabel.ar,
+            requestId: shortId,
+            submittedAt: submittedAt,
+            details: ticketDetails,
+            portalUrl: 'https://portal.yahala.co'
+          }, 'en');
+        }
+        // Also notify operations team for ticket requests (not re-entry visa only)
+        if (requestData.type === 'ticket') {
+          const opsConfig = (await kv.get('system_config:operations_team')) || { members: [] };
+          for (const ops of (opsConfig.members || [])) {
+            if (ops.email) {
+              await sendEmail(ops.email, 'approvalNeeded', {
+                managerName: ops.name || 'Operations',
+                employeeName: employee?.full_name || 'Employee',
+                requestType: typeLabel.en,
+                requestTypeAr: typeLabel.ar,
+                requestId: shortId,
+                submittedAt: submittedAt,
+                details: ticketDetails,
+                portalUrl: 'https://portal.yahala.co'
+              }, 'en');
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Error sending ticket/reentry notifications:', e);
+      }
+    }
+
+    // 3. Send notification to all admins + can_approve_requests holders
+    // (skip anyone already notified as the direct manager to avoid duplicate emails)
     const allEmployees = await kv.getByPrefix('employee:');
-    const admins = allEmployees.filter((emp: any) => emp.role === 'admin');
-    
+    const admins = allEmployees.filter((emp: any) =>
+      (emp.role === 'admin' || emp.role === 'super_admin' || emp.can_approve_requests === true)
+      && emp.email && !emp.deleted_at
+      && emp.id?.toString() !== employee?.manager_id?.toString()
+    );
+
     for (const admin of admins) {
       if (admin.email) {
         const adminEmailData = {
@@ -875,10 +970,11 @@ app.post('/make-server-fdcde35a/requests', async (c) => {
           portalUrl: 'https://portal.yahala.co'
         };
 
-        // Send email to admin
+        // Send both English and Arabic notification
         await sendEmail(admin.email, 'approvalNeeded', adminEmailData, 'en');
-        
-        console.log(`✅ Admin notification email sent to: ${admin.email}`);
+        await sendEmail(admin.email, 'approvalNeeded', adminEmailData, 'ar');
+
+        console.log(`✅ Admin/HR notification email sent to: ${admin.email}`);
       }
     }
 
@@ -1223,6 +1319,37 @@ app.patch('/make-server-fdcde35a/admin/requests/:id', async (c) => {
         console.log(`✅ Advance workflow notifications triggered for request ${id.substring(0, 8).toUpperCase()}`);
       }
 
+      // ── Update annual ticket applied flag status on approve/reject ──────────
+      if (request.type === 'ticket' && request.sub_type === 'annual_ticket') {
+        try {
+          const empForTicket = await kv.get(`employee:${request.employee_id}`);
+          if (empForTicket?.hire_date) {
+            const fyKey = getFinancialYearKey(empForTicket.hire_date);
+            const appliedKey = `annual_ticket_applied:${request.employee_id}:${fyKey}`;
+            const existing = await kv.get(appliedKey);
+            if (existing) {
+              await kv.set(appliedKey, { ...existing, status });
+            }
+          }
+        } catch (tkErr) { console.error('Error updating ticket applied flag:', tkErr); }
+      }
+
+      // ── Re-entry Visa approval (C): save return_date as reentry_visa_expiry ──
+      if (status === 'approved' && request.type === 'ticket' && request.sub_type === 'reentry_visa' && request.return_date) {
+        try {
+          const empRecord = await kv.get(`employee:${request.employee_id}`);
+          if (empRecord) {
+            const extraInfo = empRecord.extra_info || {};
+            extraInfo.reentry_visa_expiry = request.return_date;
+            empRecord.extra_info = extraInfo;
+            await kv.set(`employee:${empRecord.id}`, empRecord);
+            console.log(`✅ Re-entry visa expiry saved for employee ${request.employee_id}: ${request.return_date}`);
+          }
+        } catch (rvErr) {
+          console.error('Error saving re-entry visa expiry:', rvErr);
+        }
+      }
+
       // (b) Send confirmation to employee's manager
       if (employee?.manager_id) {
         const manager = await kv.get(`employee:${employee.manager_id}`);
@@ -1240,9 +1367,13 @@ app.patch('/make-server-fdcde35a/admin/requests/:id', async (c) => {
         }
       }
 
-      // (c) Send confirmation to all other admins
+      // (c) Send confirmation to all other admins + can_approve_requests holders
       const allEmployees = await kv.getByPrefix('employee:');
-      const otherAdmins = allEmployees.filter((emp: any) => emp.role === 'admin' && emp.id?.toString() !== admin_id?.toString() && emp.email);
+      const otherAdmins = allEmployees.filter((emp: any) =>
+        (emp.role === 'admin' || emp.role === 'super_admin' || emp.can_approve_requests === true)
+        && emp.id?.toString() !== admin_id?.toString()
+        && emp.email && !emp.deleted_at
+      );
       for (const oa of otherAdmins) {
         const oaData = {
           managerName: oa.full_name || 'Admin', employeeName: employee?.full_name || 'Employee',
@@ -1431,8 +1562,18 @@ app.get('/make-server-fdcde35a/admin/leave-balances/:employeeId', async (c) => {
     const employee = await kv.get(`employee:${employeeId}`);
     if (!employee) return c.json({ success: false, message: 'Employee not found' }, 404);
 
-    const fyKey = getFinancialYearKey(employee.hire_date || new Date().toISOString());
-    const thisYear = new Date().getFullYear();
+    const hireDateStr = employee.hire_date || new Date().toISOString();
+    const fyKey = getFinancialYearKey(hireDateStr);
+
+    // Compute the exact start/end dates of the current financial year (anniversary-based)
+    const hireDate = new Date(hireDateStr);
+    const today = new Date();
+    const anniversaryThisYear = new Date(today.getFullYear(), hireDate.getMonth(), hireDate.getDate());
+    const fyStartDate = today >= anniversaryThisYear
+      ? new Date(today.getFullYear(), hireDate.getMonth(), hireDate.getDate())
+      : new Date(today.getFullYear() - 1, hireDate.getMonth(), hireDate.getDate());
+    const fyEndDate = new Date(fyStartDate);
+    fyEndDate.setFullYear(fyEndDate.getFullYear() + 1);
 
     const allRequests = await getValuesByPrefix('request:');
     const empRequests = allRequests.filter((r: any) =>
@@ -1441,7 +1582,13 @@ app.get('/make-server-fdcde35a/admin/leave-balances/:employeeId', async (c) => {
 
     const calcDaysForType = (subType: string, status: string) =>
       empRequests
-        .filter((r: any) => r.sub_type === subType && r.status === status && new Date(r.created_at).getFullYear() === thisYear)
+        .filter((r: any) => {
+          if (r.sub_type !== subType || r.status !== status) return false;
+          // Use start_date for leave period classification; fall back to created_at
+          const refDateStr = r.start_date || r.created_at;
+          const refDate = new Date(refDateStr);
+          return refDate >= fyStartDate && refDate < fyEndDate;
+        })
         .reduce((acc: number, r: any) => {
           if (!r.start_date || !r.end_date) return acc;
           return acc + calcLeaveDays(r.start_date, r.end_date);
@@ -1528,6 +1675,157 @@ app.patch('/make-server-fdcde35a/admin/leave-balances/:employeeId', async (c) =>
   } catch (error) {
     console.error('Leave balance adjustment error:', error);
     return c.json({ success: false, message: `Error adjusting leave balance: ${error.message}` }, 500);
+  }
+});
+
+// ── GET /employee/:id/annual-ticket-status ────────────────────────────────
+// Check if an employee has already applied for their annual ticket this FY.
+// Called by the employee portal after an annual leave is submitted.
+app.get('/make-server-fdcde35a/employee/:id/annual-ticket-status', async (c) => {
+  try {
+    const employeeId = c.req.param('id');
+    const yearParam = c.req.query('year');
+    const year = yearParam ? parseInt(yearParam) : new Date().getFullYear();
+
+    // Primary check: look up the pre-booking applied flag stored by FY key
+    const employee = await kv.get(`employee:${employeeId}`);
+    const fyKey = employee?.hire_date
+      ? getFinancialYearKey(employee.hire_date)
+      : `${year}-${year + 1}`;
+
+    const appliedFlag = await kv.get(`annual_ticket_applied:${employeeId}:${fyKey}`);
+    if (appliedFlag?.applied) {
+      // Sync the live status from the actual request
+      const req = appliedFlag.requestId ? await kv.get(`request:${appliedFlag.requestId}`) : null;
+      const liveStatus = req?.status || appliedFlag.status || 'pending';
+      // If the request was rejected/cancelled, allow the employee to re-apply
+      if (liveStatus === 'rejected' || liveStatus === 'cancelled') {
+        return c.json({ applied: false, previousStatus: liveStatus });
+      }
+      return c.json({ applied: true, requestId: appliedFlag.requestId, status: liveStatus });
+    }
+
+    // Fallback: scan requests to find any active annual_ticket request for this year
+    const allRequests = await getValuesByPrefix('request:');
+    const ticketReqs = allRequests.filter((r: any) =>
+      r.employee_id?.toString() === employeeId.toString() &&
+      r.type === 'ticket' &&
+      r.sub_type === 'annual_ticket' &&
+      !['rejected', 'cancelled'].includes(r.status)
+    );
+
+    // Filter by year (travel_date or created_at)
+    const thisYearReqs = ticketReqs.filter((r: any) => {
+      const refDate = r.travel_date || r.start_date || r.created_at;
+      return refDate && new Date(refDate).getFullYear() === year;
+    });
+
+    if (thisYearReqs.length > 0) {
+      const latest = thisYearReqs.sort((a: any, b: any) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      )[0];
+      return c.json({ applied: true, requestId: latest.id, status: latest.status });
+    }
+
+    return c.json({ applied: false });
+  } catch (error) {
+    console.error('Annual ticket status error:', error);
+    return c.json({ applied: false, error: String(error) });
+  }
+});
+
+// ── GET /admin/check-anniversary-balances ─────────────────────────────────
+// Auto-credits annual leave balance on each employee's hire anniversary.
+// Triggered on admin login alongside contract-alert check (fire-and-forget).
+app.get('/make-server-fdcde35a/admin/check-anniversary-balances', async (c) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayMD = `${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+    const allEmployees = await getValuesByPrefix('employee:');
+    const credited: any[] = [];
+    const skipped: any[] = [];
+
+    for (const emp of allEmployees) {
+      if (!emp.hire_date || emp.deleted_at || emp.status === 'inactive') continue;
+
+      const hire = new Date(emp.hire_date);
+      // Must have completed at least 1 year
+      const oneYearDate = new Date(hire);
+      oneYearDate.setFullYear(oneYearDate.getFullYear() + 1);
+      if (today < oneYearDate) continue;
+
+      // Check if today is the anniversary (month-day match)
+      const hireMD = `${String(hire.getMonth() + 1).padStart(2, '0')}-${String(hire.getDate()).padStart(2, '0')}`;
+      if (hireMD !== todayMD) continue;
+
+      // Compute the NEW financial year that starts today
+      const newFyStart = today.getFullYear();
+      const newFyKey = `${newFyStart}-${newFyStart + 1}`;
+
+      // Check if we already auto-credited this FY to avoid double-credit
+      const creditedKey = `leave_auto_credit:${emp.id}:${newFyKey}`;
+      const alreadyCredited = await kv.get(creditedKey);
+      if (alreadyCredited) {
+        skipped.push({ id: emp.id, name: emp.full_name, reason: 'already_credited', fy: newFyKey });
+        continue;
+      }
+
+      // Company policy: all employees who have completed 1+ year of service receive 30 days.
+      // (Exceeds Saudi Labor Law Article 109 minimum — internal policy overrides the statutory 21-day tier.)
+      const yearsOfService = Math.floor((today.getTime() - hire.getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+      const annualAllowance = 30;
+
+      // Write the leave balance record for the new FY
+      const balKey = `leave_balance:${emp.id}:${newFyKey}`;
+      const existing = (await kv.get(balKey)) || {};
+      await kv.set(balKey, {
+        ...existing,
+        allowance: annualAllowance,
+        auto_credited: true,
+        credited_at: new Date().toISOString(),
+        years_of_service: yearsOfService,
+        financial_year: newFyKey,
+      });
+
+      // Mark as credited
+      await kv.set(creditedKey, {
+        credited_at: new Date().toISOString(),
+        allowance: annualAllowance,
+        years_of_service: yearsOfService,
+        financial_year: newFyKey,
+      });
+
+      // Send in-app notification to employee
+      const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      await kv.set(`notification:${notifId}`, {
+        id: notifId,
+        employee_id: emp.id,
+        type: 'annual_leave_credited',
+        title: 'Annual Leave Balance Credited',
+        title_ar: 'تم إضافة رصيد الإجازة السنوية',
+        message: `Your annual leave balance of ${annualAllowance} days has been credited for ${newFyKey} (${yearsOfService} years of service).`,
+        message_ar: `تم إضافة رصيد إجازتك السنوية البالغ ${annualAllowance} يوماً للسنة المالية ${newFyKey} (${yearsOfService} سنوات خدمة).`,
+        read: false,
+        created_at: new Date().toISOString(),
+        metadata: { financial_year: newFyKey, allowance: annualAllowance, years_of_service: yearsOfService },
+      });
+
+      credited.push({ id: emp.id, name: emp.full_name, allowance: annualAllowance, years_of_service: yearsOfService, fy: newFyKey });
+      console.log(`✅ Anniversary balance auto-credited for ${emp.full_name} (ID ${emp.id}): ${annualAllowance} days for FY ${newFyKey}`);
+    }
+
+    return c.json({
+      success: true,
+      date_checked: today.toISOString().split('T')[0],
+      credited,
+      skipped,
+      credited_count: credited.length,
+    });
+  } catch (error) {
+    console.error('Anniversary balance check error:', error);
+    return c.json({ success: false, message: `Error checking anniversary balances: ${error}` }, 500);
   }
 });
 
@@ -1630,11 +1928,12 @@ app.post('/make-server-fdcde35a/admin/requests/:id/resend-email', async (c) => {
       }
     }
 
-    // (3) Resend to admin(s) — same decision notification with employee context
+    // (3) Resend to admin(s) — includes role-based admins AND can_approve_requests holders
     if (recipients.includes('admin')) {
       const allEmployees = await getValuesByPrefix('employee:');
       const admins = allEmployees.filter((emp: any) =>
-        (emp.role === 'admin' || emp.role === 'super_admin') && emp.email
+        (emp.role === 'admin' || emp.role === 'super_admin' || emp.can_approve_requests === true)
+        && emp.email && !emp.deleted_at
       );
       const employeeFullName = employee?.full_name || employee?.nameEn || 'Employee';
       for (const adm of admins) {
@@ -1753,22 +2052,25 @@ app.post('/make-server-fdcde35a/employee/change-password', async (c) => {
 });
 
 // Get leave calendar events (admin)
+// Shows BOTH approved and pending leaves so HR/Admin can see the full picture.
+// Rejected, cancelled, and other terminal statuses are excluded.
 app.get('/make-server-fdcde35a/admin/leave-calendar', async (c) => {
   try {
     const requestsList = await getValuesByPrefix('request:');
-    
-    // Filter for approved leave requests only
-    const leaveRequests = requestsList.filter((req: any) => 
-      req.type === 'leave' && req.status === 'approved'
+
+    // Whitelist: only active leave statuses appear on the calendar
+    const ACTIVE_STATUSES = new Set(['approved', 'pending']);
+    const leaveRequests = requestsList.filter((req: any) =>
+      req.type === 'leave' && ACTIVE_STATUSES.has(req.status)
     );
 
     // Enrich with employee and company data
     const events = await Promise.all(
       leaveRequests.map(async (req: any) => {
-        const employee = req.employee_id 
+        const employee = req.employee_id
           ? await kv.get(`employee:${req.employee_id}`)
           : null;
-        
+
         let company = null;
         if (employee && employee.company_id) {
           company = await kv.get(`company:${employee.company_id}`);
@@ -1782,7 +2084,8 @@ app.get('/make-server-fdcde35a/admin/leave-calendar', async (c) => {
           start_date: req.start_date,
           end_date: req.end_date,
           type: req.type,
-          sub_type: req.sub_type
+          sub_type: req.sub_type,
+          status: req.status,   // ← always include so frontend can style pending vs approved
         };
       })
     );
@@ -1991,10 +2294,15 @@ app.patch('/make-server-fdcde35a/admin/employees/:id', async (c) => {
       }
     }
 
-    // Update employee in KV store
+    // Update employee in KV store — deep merge extra_info
+    const mergedExtraInfo = updates.extra_info
+      ? { ...(employee.extra_info || {}), ...updates.extra_info }
+      : employee.extra_info;
+
     const updatedEmployee = {
       ...employee,
       ...updates,
+      extra_info: mergedExtraInfo,
       id: parseInt(id), // Ensure ID doesn't change
       updated_at: new Date().toISOString()
     };
@@ -2339,7 +2647,7 @@ app.post('/make-server-fdcde35a/employee/skip-first-time-setup', async (c) => {
     return c.json({
       success: false,
       message: 'Error skipping setup',
-      messageAr: 'خطأ في تخطي الإعداد'
+      messageAr: 'خطأ في ��خطي الإعداد'
     }, 500);
   }
 });
@@ -4129,6 +4437,7 @@ app.get('/make-server-fdcde35a/admin/hr-permissions', async (c) => {
       permissions = {
         can_upload_documents: false,
         can_edit_employee_info: false,
+        can_edit_financial_info: false,
         can_resend_emails: true,
         can_cancel_requests: false,
         updated_at: new Date().toISOString()
@@ -4138,6 +4447,11 @@ app.get('/make-server-fdcde35a/admin/hr-permissions', async (c) => {
     // Back-fill can_cancel_requests for older stored records
     if (typeof permissions.can_cancel_requests === 'undefined') {
       permissions.can_cancel_requests = false;
+      await kv.set('hr_permissions', permissions);
+    }
+    // Back-fill can_post_announcements for older stored records
+    if (typeof permissions.can_post_announcements === 'undefined') {
+      permissions.can_post_announcements = false;
       await kv.set('hr_permissions', permissions);
     }
     return c.json({ success: true, permissions });
@@ -4346,8 +4660,8 @@ app.get('/make-server-fdcde35a/admin/check-contract-alerts', async (c) => {
         contractEnd.setHours(0, 0, 0, 0);
         const daysUntilEnd = Math.ceil((contractEnd.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 
-        // Trigger window: 65 to 75 days before contract end (centred on 70-day rule)
-        if (daysUntilEnd < 65 || daysUntilEnd > 75) continue;
+        // Trigger window: 45 to 55 days before contract end (centred on 50-day rule)
+        if (daysUntilEnd < 45 || daysUntilEnd > 55) continue;
 
         // Check if alert already sent for this contract end date
         const alertKey = `contract_alert:${emp.id}:${emp.contract_end_date}`;
@@ -4709,5 +5023,553 @@ app.get('/make-server-fdcde35a/manager/contracts-expiring', async (c) => {
 
 // ==================== MANAGER / HR PORTAL ROUTES ====================
 app.route('/make-server-fdcde35a/manager', managerRoutes);
+
+// ==================== DOCUMENT EXPIRY ALERTS ====================
+/**
+ * GET /admin/check-document-expiry-alerts
+ * Checks all employees for passport/iqama expiry within 30/60/90 days.
+ * Sends email alerts once per expiry event (tracked in KV).
+ */
+app.get('/make-server-fdcde35a/admin/check-document-expiry-alerts', async (c) => {
+  try {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const nowISO = new Date().toISOString();
+    const allEmployees = await getValuesByPrefix('employee:');
+    const active = allEmployees.filter((e: any) => e && !e.deleted_at && e.status !== 'inactive');
+    const alertsSent: any[] = [];
+
+    const ALERT_WINDOWS = [30, 60, 90]; // days before expiry
+
+    for (const emp of active) {
+      const docs = [
+        { field: 'passport_expiry', label: 'Passport', labelAr: 'جواز السفر', val: emp.extra_info?.passport_expiry || emp.passport_expiry },
+        { field: 'iqama_expiry', label: 'Iqama (Residence Permit)', labelAr: 'الإقامة', val: emp.extra_info?.iqama_expiry || emp.iqama_expiry },
+        { field: 'work_permit_expiry', label: 'Work Permit', labelAr: 'تصريح العمل', val: emp.extra_info?.work_permit_expiry || emp.work_permit_expiry },
+      ];
+
+      for (const doc of docs) {
+        if (!doc.val) continue;
+        try {
+          const expiryDate = new Date(doc.val); expiryDate.setHours(0, 0, 0, 0);
+          const daysUntil = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+          for (const window of ALERT_WINDOWS) {
+            if (daysUntil > window || daysUntil < window - 5) continue;
+            const alertKey = `doc_expiry_alert:${emp.id}:${doc.field}:${doc.val}:${window}`;
+            const alreadySent = await kv.get(alertKey);
+            if (alreadySent) continue;
+
+            const expiryFormatted = expiryDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+            // Portal notification for employee
+            const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            await kv.set(`notification:${notifId}`, {
+              id: notifId,
+              employee_id: emp.id,
+              title: `${doc.label} Expiry Alert — ${window} Days`,
+              title_ar: `تنبيه انتهاء ${doc.labelAr} — ${window} يوم`,
+              message: `Your ${doc.label} expires on ${expiryFormatted} (${daysUntil} days remaining). Please renew it before expiry.`,
+              message_ar: `ينتهي ${doc.labelAr} بتاريخ ${expiryFormatted} (${daysUntil} يوم متبقي). يرجى تجديده قبل انتهاء الصلاحية.`,
+              type: 'document_expiry',
+              read: false,
+              created_at: nowISO,
+              metadata: { document: doc.field, expiry_date: doc.val, days_remaining: daysUntil }
+            });
+
+            // Email to employee
+            if (emp.email) {
+              await sendEmail(emp.email, 'approvalNeeded', {
+                managerName: emp.full_name || 'Employee',
+                employeeName: emp.full_name || 'Employee',
+                requestType: `${doc.label} Expiry Alert`,
+                requestTypeAr: `تنبيه انتهاء ${doc.labelAr}`,
+                requestId: `DOC-${daysUntil}D`,
+                submittedAt: nowISO,
+                details: `Your ${doc.label} expires on ${expiryFormatted} (${daysUntil} days). Please renew immediately to avoid issues.`,
+                portalUrl: 'https://portal.yahala.co'
+              }, 'en');
+            }
+
+            // Email to HR (can_approve_requests)
+            const hrList = allEmployees.filter((e: any) => e.can_approve_requests && !e.deleted_at && e.email);
+            for (const hr of hrList) {
+              await sendEmail(hr.email, 'approvalNeeded', {
+                managerName: hr.full_name || 'HR',
+                employeeName: emp.full_name || 'Employee',
+                requestType: `${doc.label} Expiry Alert`,
+                requestTypeAr: `تنبيه انتهاء ${doc.labelAr}`,
+                requestId: `DOC-${daysUntil}D`,
+                submittedAt: nowISO,
+                details: `${emp.full_name}'s ${doc.label} expires on ${expiryFormatted} (${daysUntil} days remaining). Action required.`,
+                portalUrl: 'https://portal.yahala.co'
+              }, 'en');
+            }
+
+            await kv.set(alertKey, { sent_at: nowISO, days_remaining: daysUntil });
+            alertsSent.push({ employee_id: emp.id, document: doc.field, days_remaining: daysUntil });
+            console.log(`✅ Document expiry alert: ${emp.full_name} — ${doc.label} — ${daysUntil} days`);
+          }
+        } catch (docErr) {
+          console.error(`Error processing doc expiry for emp ${emp.id}:`, docErr);
+        }
+      }
+    }
+
+    return c.json({ success: true, alertsSent, total: alertsSent.length,
+      message: alertsSent.length === 0 ? 'No document expiry alerts needed today' : `${alertsSent.length} document expiry alert(s) sent` });
+  } catch (error) {
+    console.error('check-document-expiry-alerts error:', error);
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// GET /admin/document-expiry-report — list of employees with expiring docs
+app.get('/make-server-fdcde35a/admin/document-expiry-report', async (c) => {
+  try {
+    const withinDays = parseInt(c.req.query('days') || '90');
+    const today = new Date(); today.setHours(0,0,0,0);
+    const allEmployees = await getValuesByPrefix('employee:');
+    const active = allEmployees.filter((e: any) => e && !e.deleted_at && e.status !== 'inactive');
+    const expiring: any[] = [];
+
+    for (const emp of active) {
+      const docs = [
+        { field: 'passport_expiry', label: 'Passport', labelAr: 'جواز السفر', val: emp.extra_info?.passport_expiry || emp.passport_expiry },
+        { field: 'iqama_expiry', label: 'Iqama', labelAr: 'الإقامة', val: emp.extra_info?.iqama_expiry || emp.iqama_expiry },
+        { field: 'work_permit_expiry', label: 'Work Permit', labelAr: 'تصريح العمل', val: emp.extra_info?.work_permit_expiry || emp.work_permit_expiry },
+        { field: 'reentry_visa_expiry', label: 'Re-Entry Visa', labelAr: 'تأشيرة الخروج والعودة', val: emp.extra_info?.reentry_visa_expiry || emp.reentry_visa_expiry },
+      ];
+      for (const doc of docs) {
+        if (!doc.val) continue;
+        try {
+          const expiryDate = new Date(doc.val); expiryDate.setHours(0,0,0,0);
+          const daysUntil = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysUntil <= withinDays) {
+            expiring.push({
+              employee_id: emp.id,
+              full_name: emp.full_name,
+              full_name_ar: emp.full_name_ar,
+              position: emp.position,
+              company_id: emp.company_id,
+              document: doc.field,
+              document_label: doc.label,
+              document_label_ar: doc.labelAr,
+              expiry_date: doc.val,
+              days_remaining: daysUntil,
+              is_expired: daysUntil < 0
+            });
+          }
+        } catch { /* skip */ }
+      }
+    }
+
+    expiring.sort((a, b) => a.days_remaining - b.days_remaining);
+    return c.json({ success: true, expiring, total: expiring.length });
+  } catch (error) {
+    console.error('document-expiry-report error:', error);
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// ==================== TICKET BANDS MANAGEMENT ====================
+
+// GET /admin/ticket-bands — Get all ticket price bands
+app.get('/make-server-fdcde35a/admin/ticket-bands', async (c) => {
+  try {
+    const config = (await kv.get('system_config:ticket_bands')) || { bands: getDefaultBands() };
+    return c.json({ success: true, bands: config.bands });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+function getDefaultBands() {
+  return [
+    { id: 'band_beirut', destination: 'Beirut', destination_ar: 'بيروت', country: 'Lebanon', country_ar: 'لبنان', min_sar: 1500, max_sar: 2300 },
+    { id: 'band_cairo', destination: 'Cairo', destination_ar: 'القاهرة', country: 'Egypt', country_ar: 'مصر', min_sar: 1500, max_sar: 1700 },
+    { id: 'band_alexandria', destination: 'Alexandria', destination_ar: 'الإسكندرية', country: 'Egypt', country_ar: 'مصر', min_sar: 1500, max_sar: 1750 },
+    { id: 'band_amman', destination: 'Amman', destination_ar: 'عمّان', country: 'Jordan', country_ar: 'الأردن', min_sar: 1500, max_sar: 1750 },
+    { id: 'band_trivandrum', destination: 'Trivandrum', destination_ar: 'تريفاندروم', country: 'India', country_ar: 'الهند', min_sar: 1500, max_sar: 2200 },
+    { id: 'band_pakistan', destination: 'Pakistan (from Arar)', destination_ar: 'باكستان (من عرعر)', country: 'Pakistan', country_ar: 'باكستان', min_sar: 1500, max_sar: 2000 },
+  ];
+}
+
+// POST /admin/ticket-bands — Create a new band
+app.post('/make-server-fdcde35a/admin/ticket-bands', async (c) => {
+  try {
+    const { destination, destination_ar, country, country_ar, min_sar, max_sar } = await c.req.json();
+    if (!destination || !max_sar) return c.json({ success: false, message: 'destination and max_sar are required' }, 400);
+    const config = (await kv.get('system_config:ticket_bands')) || { bands: getDefaultBands() };
+    const newBand = {
+      id: `band_${Date.now()}`,
+      destination, destination_ar: destination_ar || destination,
+      country: country || '', country_ar: country_ar || country || '',
+      min_sar: min_sar || 1500, max_sar
+    };
+    config.bands = [...(config.bands || []), newBand];
+    await kv.set('system_config:ticket_bands', config);
+    return c.json({ success: true, band: newBand });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// PATCH /admin/ticket-bands/:id — Update a band
+app.patch('/make-server-fdcde35a/admin/ticket-bands/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const updates = await c.req.json();
+    const config = (await kv.get('system_config:ticket_bands')) || { bands: getDefaultBands() };
+    config.bands = (config.bands || []).map((b: any) => b.id === id ? { ...b, ...updates } : b);
+    await kv.set('system_config:ticket_bands', config);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// DELETE /admin/ticket-bands/:id — Delete a band
+app.delete('/make-server-fdcde35a/admin/ticket-bands/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const config = (await kv.get('system_config:ticket_bands')) || { bands: getDefaultBands() };
+    config.bands = (config.bands || []).filter((b: any) => b.id !== id);
+    await kv.set('system_config:ticket_bands', config);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// ==================== OPERATIONS TEAM MANAGEMENT ====================
+
+// GET /admin/operations-team — Get operations team members
+app.get('/make-server-fdcde35a/admin/operations-team', async (c) => {
+  try {
+    const config = (await kv.get('system_config:operations_team')) || { members: [] };
+    return c.json({ success: true, members: config.members });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// POST /admin/operations-team — Add an operations member
+app.post('/make-server-fdcde35a/admin/operations-team', async (c) => {
+  try {
+    const { name, name_ar, email, phone } = await c.req.json();
+    if (!name || !email) return c.json({ success: false, message: 'name and email are required' }, 400);
+    const config = (await kv.get('system_config:operations_team')) || { members: [] };
+    const member = { id: `ops_${Date.now()}`, name, name_ar: name_ar || name, email, phone: phone || '', created_at: new Date().toISOString() };
+    config.members = [...(config.members || []), member];
+    await kv.set('system_config:operations_team', config);
+    return c.json({ success: true, member });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// DELETE /admin/operations-team/:id — Remove a member
+app.delete('/make-server-fdcde35a/admin/operations-team/:id', async (c) => {
+  try {
+    const id = c.req.param('id');
+    const config = (await kv.get('system_config:operations_team')) || { members: [] };
+    config.members = (config.members || []).filter((m: any) => m.id !== id);
+    await kv.set('system_config:operations_team', config);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// ==================== TICKET BALANCE ====================
+
+// GET /admin/ticket-balance/:employeeId — Get ticket usage for employee
+app.get('/make-server-fdcde35a/admin/ticket-balance/:employeeId', async (c) => {
+  try {
+    const employeeId = c.req.param('employeeId');
+    const employee = await kv.get(`employee:${employeeId}`);
+    if (!employee) return c.json({ success: false, message: 'Employee not found' }, 404);
+
+    const thisYear = new Date().getFullYear();
+    const nextYear = thisYear + 1;
+
+    // Check annual ticket eligibility
+    let annualTicketEligible = false;
+    let eligibleDate: string | null = null;
+    if (employee.hire_date) {
+      const hire = new Date(employee.hire_date);
+      const elig = new Date(hire); elig.setFullYear(elig.getFullYear() + 1);
+      const today = new Date(); today.setHours(0,0,0,0); elig.setHours(0,0,0,0);
+      annualTicketEligible = today >= elig;
+      if (!annualTicketEligible) eligibleDate = elig.toISOString().split('T')[0];
+    }
+
+    // Get ticket balance for this year and next
+    const thisYearBal = (await kv.get(`ticket_balance:${employeeId}:${thisYear}`)) || { used: 0, special_case_used: 0 };
+    const nextYearBal = (await kv.get(`ticket_balance:${employeeId}:${nextYear}`)) || { used: 0, special_case_used: 0 };
+
+    // Get ticket requests
+    const allRequests = await getValuesByPrefix('request:');
+    const ticketReqs = allRequests.filter((r: any) =>
+      r && r.employee_id?.toString() === employeeId.toString() && r.type === 'ticket'
+    );
+
+    const usedThisYear = ticketReqs.filter((r: any) => {
+      const y = new Date(r.created_at).getFullYear();
+      return y === thisYear && r.status === 'approved' && !r.deduct_from_next_year;
+    }).length;
+
+    const specialCaseThisYear = ticketReqs.filter((r: any) => {
+      const y = new Date(r.created_at).getFullYear();
+      return y === thisYear && r.is_special_case && r.status === 'approved';
+    }).length;
+
+    const pendingThisYear = ticketReqs.filter((r: any) => {
+      const y = new Date(r.created_at).getFullYear();
+      return y === thisYear && r.status === 'pending';
+    }).length;
+
+    return c.json({
+      success: true,
+      employee: { id: employee.id, full_name: employee.full_name, hire_date: employee.hire_date },
+      annualTicketEligible,
+      eligibleDate,
+      currentYear: thisYear,
+      balance: {
+        thisYear: { allowed: 1, used: usedThisYear, special_case: specialCaseThisYear, pending: pendingThisYear, available: Math.max(0, 1 - usedThisYear - pendingThisYear) },
+        nextYear: { deducted: specialCaseThisYear } // special cases deduct from next year
+      },
+      ticketHistory: ticketReqs.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// GET /admin/ticket-bands-public — Public endpoint for employee portal
+app.get('/make-server-fdcde35a/ticket-bands', async (c) => {
+  try {
+    const config = (await kv.get('system_config:ticket_bands')) || { bands: getDefaultBands() };
+    return c.json({ success: true, bands: config.bands });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// ==================== EMPLOYEE SELF-VIEW: DOCUMENT EXPIRY ====================
+
+// GET /employee-document-expiry/:employeeId — Own documents only (no admin token)
+app.get('/make-server-fdcde35a/employee-document-expiry/:employeeId', async (c) => {
+  try {
+    const employeeId = c.req.param('employeeId');
+    const emp = await kv.get(`employee:${employeeId}`);
+    if (!emp) return c.json({ success: false, message: 'Employee not found' }, 404);
+
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const docs = [
+      { field: 'passport_expiry',     label: 'Passport',          labelAr: 'جواز السفر',              val: emp.extra_info?.passport_expiry     || emp.passport_expiry },
+      { field: 'iqama_expiry',        label: 'Iqama (Residency)', labelAr: 'الإقامة',                  val: emp.extra_info?.iqama_expiry        || emp.iqama_expiry },
+      { field: 'work_permit_expiry',  label: 'Work Permit',       labelAr: 'تصريح العمل',              val: emp.extra_info?.work_permit_expiry  || emp.work_permit_expiry },
+      { field: 'contract_end_date',   label: 'Contract',          labelAr: 'العقد',                    val: emp.contract_end_date },
+      { field: 'reentry_visa_expiry', label: 'Re-Entry Visa',     labelAr: 'تأشيرة الخروج والعودة',   val: emp.extra_info?.reentry_visa_expiry || emp.reentry_visa_expiry },
+    ];
+
+    const documents = docs.map(doc => {
+      if (!doc.val) return null;
+      try {
+        const expiry = new Date(doc.val); expiry.setHours(0, 0, 0, 0);
+        const days = Math.ceil((expiry.getTime() - today.getTime()) / 86400000);
+        return { field: doc.field, label: doc.label, labelAr: doc.labelAr, expiry_date: doc.val, days_remaining: days, is_expired: days < 0 };
+      } catch { return null; }
+    }).filter(Boolean);
+
+    return c.json({ success: true, documents });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// ==================== MANAGER: TEAM DOCUMENT EXPIRY ====================
+
+// GET /manager/team-document-expiry?manager_id=X&days=90
+app.get('/make-server-fdcde35a/manager/team-document-expiry', async (c) => {
+  try {
+    const managerId = c.req.query('manager_id');
+    const withinDays = parseInt(c.req.query('days') || '90');
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+
+    const allEmployees = await getValuesByPrefix('employee:');
+    const teamMembers = managerId
+      ? allEmployees.filter((e: any) => e && !e.deleted_at && e.status !== 'inactive' && e.manager_id?.toString() === managerId.toString())
+      : allEmployees.filter((e: any) => e && !e.deleted_at && e.status !== 'inactive');
+
+    const alerts: any[] = [];
+    for (const emp of teamMembers) {
+      const docs = [
+        { field: 'passport_expiry',     label: 'Passport',        labelAr: 'جواز السفر',            val: emp.extra_info?.passport_expiry     || emp.passport_expiry },
+        { field: 'iqama_expiry',        label: 'Iqama',           labelAr: 'الإقامة',                val: emp.extra_info?.iqama_expiry        || emp.iqama_expiry },
+        { field: 'work_permit_expiry',  label: 'Work Permit',     labelAr: 'تصريح العمل',            val: emp.extra_info?.work_permit_expiry  || emp.work_permit_expiry },
+        { field: 'contract_end_date',   label: 'Contract',        labelAr: 'العقد',                  val: emp.contract_end_date },
+        { field: 'reentry_visa_expiry', label: 'Re-Entry Visa',   labelAr: 'تأشيرة الخروج والعودة', val: emp.extra_info?.reentry_visa_expiry || emp.reentry_visa_expiry },
+      ];
+      for (const doc of docs) {
+        if (!doc.val) continue;
+        try {
+          const expiry = new Date(doc.val); expiry.setHours(0, 0, 0, 0);
+          const days = Math.ceil((expiry.getTime() - today.getTime()) / 86400000);
+          if (days <= withinDays) {
+            alerts.push({
+              employee_id: emp.id, full_name: emp.full_name, full_name_ar: emp.full_name_ar,
+              position: emp.position, field: doc.field, label: doc.label, labelAr: doc.labelAr,
+              expiry_date: doc.val, days_remaining: days, is_expired: days < 0
+            });
+          }
+        } catch { /* skip */ }
+      }
+    }
+    alerts.sort((a, b) => a.days_remaining - b.days_remaining);
+    return c.json({ success: true, alerts, total: alerts.length });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// ==================== TICKET BAND BY NATIONALITY LOOKUP ====================
+
+// Nationality → country mapping table
+const NATIONALITY_TO_COUNTRY: Record<string, string> = {
+  lebanese: 'lebanon', egyptian: 'egypt', indian: 'india', pakistani: 'pakistan',
+  bangladeshi: 'bangladesh', philippine: 'philippines', filipino: 'philippines',
+  indonesian: 'indonesia', nepali: 'nepal', 'sri lankan': 'sri lanka',
+  jordanian: 'jordan', syrian: 'syria', yemeni: 'yemen', sudanese: 'sudan',
+  somali: 'somalia', ethiopian: 'ethiopia', kenyan: 'kenya', ghanaian: 'ghana',
+  nigerian: 'nigeria', moroccan: 'morocco', tunisian: 'tunisia', algerian: 'algeria',
+  turkish: 'turkey', irani: 'iran', iraqi: 'iraq', afghan: 'afghanistan',
+};
+
+// GET /ticket-band-by-nationality?nationality=Egyptian
+app.get('/make-server-fdcde35a/ticket-band-by-nationality', async (c) => {
+  try {
+    const raw = (c.req.query('nationality') || '').toLowerCase().trim();
+    const country = NATIONALITY_TO_COUNTRY[raw] || raw; // fall back to raw as country name
+
+    const config = (await kv.get('system_config:ticket_bands')) || { bands: getDefaultBands() };
+    const bands: any[] = config.bands || [];
+
+    // Find best match: exact country match first, then partial
+    const matched = bands.find((b: any) => b.country?.toLowerCase() === country)
+      || bands.find((b: any) => b.country?.toLowerCase().includes(country) || country.includes(b.country?.toLowerCase()));
+
+    return c.json({ success: true, band: matched || null, country_searched: country });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// ==================== SPECIAL CASE APPROVAL ====================
+// Mark a special-case ticket as approved and update balance
+app.post('/make-server-fdcde35a/admin/approve-special-ticket/:requestId', async (c) => {
+  try {
+    const requestId = c.req.param('requestId');
+    const { notes } = await c.req.json().catch(() => ({ notes: '' }));
+    const request = await kv.get(`request:${requestId}`);
+    if (!request) return c.json({ success: false, message: 'Request not found' }, 404);
+
+    const nextYear = new Date().getFullYear() + 1;
+    // Deduct from next year balance
+    const nextYearKey = `ticket_balance:${request.employee_id}:${nextYear}`;
+    const nextYearBal = (await kv.get(nextYearKey)) || { used: 0, special_case_used: 0 };
+    nextYearBal.special_case_used = (nextYearBal.special_case_used || 0) + 1;
+    await kv.set(nextYearKey, nextYearBal);
+
+    // Approve the request
+    const updated = { ...request, status: 'approved', special_case_approved: true, approval_notes: notes, processed_at: new Date().toISOString() };
+    await kv.set(`request:${requestId}`, updated);
+
+    return c.json({ success: true, message: 'Special case ticket approved and deducted from next year balance' });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// ==================== HR-ACCESSIBLE DOCUMENT EXPIRY (no admin token required) ====================
+// GET /hr/document-expiry-report — same logic as admin version but accessible to HR/Manager roles
+app.get('/make-server-fdcde35a/hr/document-expiry-report', async (c) => {
+  try {
+    const employeeId = c.req.query('employee_id');
+    if (!employeeId) {
+      return c.json({ success: false, message: 'employee_id is required for HR access' }, 400);
+    }
+
+    // Verify the caller is a manager or has can_approve_requests
+    const caller = await kv.get(`employee:${employeeId}`);
+    if (!caller || caller.deleted_at) {
+      return c.json({ success: false, message: 'Employee not found' }, 404);
+    }
+    if (caller.role !== 'manager' && caller.role !== 'owner' && !caller.can_approve_requests) {
+      return c.json({ success: false, message: 'Insufficient permissions. Only HR/Manager can access this report.' }, 403);
+    }
+
+    const withinDays = parseInt(c.req.query('days') || '90');
+    const today = new Date(); today.setHours(0,0,0,0);
+    const allEmployees = await getValuesByPrefix('employee:');
+    const active = allEmployees.filter((e: any) => e && !e.deleted_at && e.status !== 'inactive');
+    const expiring: any[] = [];
+
+    for (const emp of active) {
+      const docs = [
+        { field: 'passport_expiry', label: 'Passport', labelAr: 'جواز السفر', val: emp.extra_info?.passport_expiry || emp.passport_expiry },
+        { field: 'iqama_expiry', label: 'Iqama', labelAr: 'الإقامة', val: emp.extra_info?.iqama_expiry || emp.iqama_expiry },
+        { field: 'work_permit_expiry', label: 'Work Permit', labelAr: 'تصريح العمل', val: emp.extra_info?.work_permit_expiry || emp.work_permit_expiry },
+        { field: 'reentry_visa_expiry', label: 'Re-Entry Visa', labelAr: 'تأشيرة الخروج والعودة', val: emp.extra_info?.reentry_visa_expiry || emp.reentry_visa_expiry },
+      ];
+      for (const doc of docs) {
+        if (!doc.val) continue;
+        try {
+          const expiryDate = new Date(doc.val); expiryDate.setHours(0,0,0,0);
+          const daysUntil = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysUntil <= withinDays) {
+            expiring.push({
+              employee_id: emp.id,
+              full_name: emp.full_name,
+              full_name_ar: emp.full_name_ar,
+              position: emp.position,
+              company_id: emp.company_id,
+              document: doc.field,
+              document_label: doc.label,
+              document_label_ar: doc.labelAr,
+              expiry_date: doc.val,
+              days_remaining: daysUntil,
+              is_expired: daysUntil < 0
+            });
+          }
+        } catch { /* skip */ }
+      }
+    }
+
+    expiring.sort((a, b) => a.days_remaining - b.days_remaining);
+    return c.json({ success: true, expiring, total: expiring.length });
+  } catch (error) {
+    console.error('hr/document-expiry-report error:', error);
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
+
+// POST /hr/check-document-expiry-alerts — HR-accessible alert sender
+app.post('/make-server-fdcde35a/hr/check-document-expiry-alerts', async (c) => {
+  try {
+    const { employee_id } = await c.req.json().catch(() => ({ employee_id: null }));
+    if (!employee_id) {
+      return c.json({ success: false, message: 'employee_id required' }, 400);
+    }
+    const caller = await kv.get(`employee:${employee_id}`);
+    if (!caller || caller.deleted_at || (caller.role !== 'manager' && caller.role !== 'owner' && !caller.can_approve_requests)) {
+      return c.json({ success: false, message: 'Insufficient permissions' }, 403);
+    }
+    return c.json({ success: true, total: 0, message: 'Alert check completed. Use admin panel for full alert dispatch.' });
+  } catch (error) {
+    return c.json({ success: false, message: `Error: ${error.message}` }, 500);
+  }
+});
 
 Deno.serve(app.fetch);

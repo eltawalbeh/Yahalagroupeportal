@@ -13,7 +13,9 @@ import {
   AlertTriangle,
   DollarSign,
   DoorOpen,
-  CalendarClock
+  CalendarClock,
+  Shield,
+  CreditCard
 } from 'lucide-react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
@@ -31,8 +33,10 @@ interface ManagerDashboardV2Props {
   recentRequests?: any[];
   employeesCount?: number;
   contractsExpiring?: any[];
+  teamDocAlerts?: any[];
   onNavigate?: (page: string) => void;
   onProcessRequest?: (requestId: string, status: 'approved' | 'rejected') => void;
+  canApproveRequests?: boolean;
 }
 
 export function ManagerDashboardV2({ 
@@ -40,8 +44,10 @@ export function ManagerDashboardV2({
   recentRequests = [], 
   employeesCount = 0,
   contractsExpiring = [],
+  teamDocAlerts = [],
   onNavigate,
-  onProcessRequest
+  onProcessRequest,
+  canApproveRequests = false
 }: ManagerDashboardV2Props) {
   const { t, language } = useLanguage();
 
@@ -215,23 +221,36 @@ export function ManagerDashboardV2({
                       )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <Button 
-                        size="sm" 
-                        variant="outline"
-                        className="h-8 px-3 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
-                        onClick={() => onProcessRequest?.(req.id, 'rejected')}
-                      >
-                        <XCircle className="w-3.5 h-3.5 me-1" />
-                        {t('Reject', 'رفض')}
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white"
-                        onClick={() => onProcessRequest?.(req.id, 'approved')}
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5 me-1" />
-                        {t('Approve', 'موافقة')}
-                      </Button>
+                      {canApproveRequests ? (
+                        <>
+                          <Button 
+                            size="sm" 
+                            variant="outline"
+                            className="h-8 px-3 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                            onClick={() => onProcessRequest?.(req.id, 'rejected')}
+                          >
+                            <XCircle className="w-3.5 h-3.5 me-1" />
+                            {t('Reject', 'رفض')}
+                          </Button>
+                          <Button 
+                            size="sm" 
+                            className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white"
+                            onClick={() => onProcessRequest?.(req.id, 'approved')}
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5 me-1" />
+                            {t('Approve', 'موافقة')}
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 px-3 text-muted-foreground"
+                          onClick={() => onNavigate?.('requests')}
+                        >
+                          {t('View', 'عرض')}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -363,6 +382,76 @@ export function ManagerDashboardV2({
           </Card>
         </div>
       </div>
+
+      {/* ── Team Document Alerts (B) ── */}
+      {teamDocAlerts.length > 0 && (
+        <Card className="shadow-sm border-red-200 dark:border-red-800/40 bg-gradient-to-br from-red-50/60 to-white dark:from-red-950/20 dark:to-slate-900">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-red-100 dark:bg-red-900/30">
+                  <Shield className="w-4 h-4 text-red-600 dark:text-red-400" />
+                </div>
+                <div>
+                  <CardTitle className="text-base">
+                    {t('Team Document Alerts', 'تنبيهات وثائق الفريق')}
+                  </CardTitle>
+                  <CardDescription>
+                    {t('Documents expiring within 90 days — read only', 'وثائق تنتهي خلال 90 يوماً — للاطلاع فقط')}
+                  </CardDescription>
+                </div>
+              </div>
+              <Badge variant="secondary" className="bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 border-0">
+                {teamDocAlerts.length} {t('alerts', 'تنبيه')}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="px-0 pt-0">
+            <div className="space-y-0">
+              {teamDocAlerts.slice(0, 8).map((alert, i) => {
+                const isExpired = alert.is_expired;
+                const isCritical = !isExpired && alert.days_remaining <= 20;
+                const isWarning  = !isExpired && alert.days_remaining > 20 && alert.days_remaining <= 50;
+                const dotColor = isExpired || isCritical ? 'bg-red-500' : isWarning ? 'bg-amber-500' : 'bg-sky-400';
+                return (
+                  <div
+                    key={`${alert.employee_id}-${alert.field}-${i}`}
+                    className="flex items-center gap-4 px-6 py-3 border-b border-border/50 last:border-0 hover:bg-white/80 dark:hover:bg-slate-800/50 transition-colors"
+                  >
+                    <div className={cn('w-2 h-2 rounded-full shrink-0', dotColor)} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {language === 'ar' ? alert.full_name_ar || alert.full_name : alert.full_name}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {language === 'ar' ? alert.labelAr : alert.label}
+                        {' · '}
+                        {new Date(alert.expiry_date).toLocaleDateString(language === 'ar' ? 'ar-SA' : 'en-US', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </p>
+                    </div>
+                    <span className={cn(
+                      'text-xs font-semibold rounded-full px-2.5 py-1 shrink-0',
+                      isExpired ? 'bg-red-600 text-white'
+                        : isCritical ? 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300'
+                        : isWarning ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300'
+                        : 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300'
+                    )}>
+                      {isExpired
+                        ? t('Expired', 'منتهية')
+                        : t(`${alert.days_remaining}d`, `${alert.days_remaining} ي`)}
+                    </span>
+                  </div>
+                );
+              })}
+              {teamDocAlerts.length > 8 && (
+                <div className="px-6 py-3 text-xs text-muted-foreground">
+                  {t(`+${teamDocAlerts.length - 8} more alerts. Go to Document Expiry for full view.`, `+${teamDocAlerts.length - 8} تنبيهات إضافية. انتقل إلى انتهاء الوثائق للعرض الكامل.`)}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Contracts Expiring Soon (Manager View) ──────────────────────────────── */}
       {contractsExpiring.length > 0 && (

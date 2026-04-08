@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useId, useMemo, useRef } from 'react';
 import { 
   TrendingUp, 
   Users, 
@@ -57,23 +57,29 @@ export function AdminDashboardV2({
   onNavigate 
 }: AdminDashboardV2Props) {
   const { t, language } = useLanguage();
+  // useId() provides a stable, unique ID per component instance — eliminates Recharts SVG key collisions
+  const uid = useId().replace(/:/g, '');
+  const gradientApprovedId = `colorApproved-${uid}`;
+  const gradientRejectedId = `colorRejected-${uid}`;
 
   // Generate real chart data from requests grouped by month
   const chartData = useMemo(() => {
-    const months: Record<string, { approved: number; rejected: number; pending: number }> = {};
+    const months: Record<string, { approved: number; rejected: number; pending: number; label: string }> = {};
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     
     // Initialize last 6 months
     const now = new Date();
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${d.getMonth()}`;
-      months[key] = { approved: 0, rejected: 0, pending: 0 };
+      const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, '0')}`;
+      // Append year if window might span two calendar years
+      const label = i > 0 && d.getMonth() === 11 ? `Dec '${String(d.getFullYear()).slice(2)}` : monthNames[d.getMonth()];
+      months[key] = { approved: 0, rejected: 0, pending: 0, label };
     }
 
     recentRequests.forEach(req => {
       const d = new Date(req.created_at);
-      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      const key = `${d.getFullYear()}-${String(d.getMonth()).padStart(2, '0')}`;
       if (months[key]) {
         if (req.status === 'approved') months[key].approved++;
         else if (req.status === 'rejected') months[key].rejected++;
@@ -81,15 +87,13 @@ export function AdminDashboardV2({
       }
     });
 
-    return Object.entries(months).map(([key, val]) => {
-      const [, month] = key.split('-').map(Number);
-      return {
-        name: monthNames[month],
-        approved: val.approved,
-        rejected: val.rejected,
-        pending: val.pending,
-      };
-    });
+    return Object.entries(months).map(([key, val]) => ({
+      name: val.label,
+      key,
+      approved: val.approved,
+      rejected: val.rejected,
+      pending: val.pending,
+    }));
   }, [recentRequests]);
 
   // Company distribution - employees per company
@@ -152,7 +156,7 @@ export function AdminDashboardV2({
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard 
-          title={t('Total Requests', 'إجمالي الطلبات')}
+          title={t('Total Requests', 'إجالي الطلبات')}
           value={stats?.total?.toString() || "0"}
           trend={`${stats?.total || 0} ${t('all time', 'إجمالي')}`}
           trendUp={true}
@@ -200,13 +204,13 @@ export function AdminDashboardV2({
           </CardHeader>
           <CardContent className="h-[300px]">
             <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+              <AreaChart id={`areachart-${uid}`} data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                 <defs>
-                  <linearGradient id="colorApproved" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id={gradientApprovedId} x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.15}/>
                     <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
                   </linearGradient>
-                  <linearGradient id="colorRejected" x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id={gradientRejectedId} x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#ef4444" stopOpacity={0.15}/>
                     <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
                   </linearGradient>
@@ -217,8 +221,8 @@ export function AdminDashboardV2({
                   contentStyle={{ backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                 />
                 <CartesianGrid vertical={false} stroke="#e2e8f0" strokeDasharray="3 3" />
-                <Area type="monotone" dataKey="approved" name={t('Approved', 'موافق')} stroke="#4f46e5" strokeWidth={2} fillOpacity={1} fill="url(#colorApproved)" />
-                <Area type="monotone" dataKey="rejected" name={t('Rejected', 'مرفوض')} stroke="#ef4444" strokeWidth={2} fillOpacity={1} fill="url(#colorRejected)" />
+                <Area type="monotone" dataKey="approved" name={t('Approved', 'موافق')} stroke="#4f46e5" strokeWidth={2} fillOpacity={1} fill={`url(#${gradientApprovedId})`} />
+                <Area type="monotone" dataKey="rejected" name={t('Rejected', 'مرفوض')} stroke="#ef4444" strokeWidth={2} fillOpacity={1} fill={`url(#${gradientRejectedId})`} />
               </AreaChart>
             </ResponsiveContainer>
           </CardContent>
@@ -316,7 +320,7 @@ export function AdminDashboardV2({
              <div className="p-2 rounded-full bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400">
                <UserPlus className="w-5 h-5" />
              </div>
-             <span className="font-medium">{t('Manage Employees', 'إدارة الموظفين')}</span>
+             <span className="font-medium">{t('Manage Employees', 'إداة الموظفين')}</span>
            </Button>
            <Button 
              variant="outline" 

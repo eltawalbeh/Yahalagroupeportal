@@ -1269,8 +1269,8 @@ export async function sendEmail(
       console.log('📋 SETUP INSTRUCTIONS:');
       console.log('1. Go to https://resend.com and sign up');
       console.log('2. Create an API key in the dashboard');
-      console.log('3. Add it to RESEND_API_KEY in environment');
-      console.log('4. Restart the server');
+      console.log('3. Add it to RESEND_API_KEY in Supabase environment variables');
+      console.log('4. The email system will work automatically after that');
       console.log('════════════════════════════════════════');
       console.log('');
       return false;
@@ -1287,7 +1287,7 @@ export async function sendEmail(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'Ya Hala Group HR <eportal@yahala.co>',
+        from: 'Ya Hala Group HR <noreply@yahala.co>',
         to: [to],
         subject: subject,
         html: html,
@@ -1301,6 +1301,11 @@ export async function sendEmail(
       console.log('❌ RESEND API ERROR');
       console.log('Status:', response.status);
       console.log('Error:', JSON.stringify(result, null, 2));
+      console.log('════════════════════════════════════════');
+      console.log('⚠️  COMMON ISSUES:');
+      console.log('1. Invalid API key - Check your RESEND_API_KEY');
+      console.log('2. Domain not verified - Use onboarding@resend.dev for testing');
+      console.log('3. Rate limit exceeded - Wait a moment and try again');
       console.log('════════════════════════════════════════');
       console.log('');
       return false;
@@ -1347,7 +1352,7 @@ export async function sendEmailWithCC(
     }
 
     const payload: any = {
-      from: 'Ya Hala Group HR <eportal@yahala.co>',
+      from: 'Ya Hala Group HR <noreply@yahala.co>',
       to: [to],
       subject,
       html,

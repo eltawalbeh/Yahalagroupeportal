@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, FileText, Info, Mail, Loader2, CheckCircle2, RefreshCw, Ban } from 'lucide-react';
+import { Shield, FileText, Info, Mail, Loader2, CheckCircle2, RefreshCw, Ban, Megaphone } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -14,8 +14,10 @@ import { adminFetch } from '../utils/adminApi';
 interface HRPermissions {
   can_upload_documents: boolean;
   can_edit_employee_info: boolean;
+  can_edit_financial_info: boolean;
   can_resend_emails: boolean;
   can_cancel_requests: boolean;
+  can_post_announcements: boolean;
   updated_at?: string;
   updated_by?: string;
 }
@@ -26,8 +28,10 @@ export function HRPermissionsManager() {
   const [permissions, setPermissions] = useState<HRPermissions>({
     can_upload_documents: false,
     can_edit_employee_info: false,
+    can_edit_financial_info: false,
     can_resend_emails: true,
-    can_cancel_requests: false
+    can_cancel_requests: false,
+    can_post_announcements: false,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -46,8 +50,10 @@ export function HRPermissionsManager() {
         setPermissions({
           can_upload_documents: data.permissions.can_upload_documents || false,
           can_edit_employee_info: data.permissions.can_edit_employee_info || false,
+          can_edit_financial_info: data.permissions.can_edit_financial_info || false,
           can_resend_emails: data.permissions.can_resend_emails !== false,
-          can_cancel_requests: data.permissions.can_cancel_requests || false
+          can_cancel_requests: data.permissions.can_cancel_requests || false,
+          can_post_announcements: data.permissions.can_post_announcements || false,
         });
         if (data.permissions.updated_at) {
           setLastSaved(data.permissions.updated_at);
@@ -81,8 +87,10 @@ export function HRPermissionsManager() {
         const labelMap: Record<string, { en: string; ar: string }> = {
           can_upload_documents: { en: 'Document Upload', ar: 'تحميل المستندات' },
           can_edit_employee_info: { en: 'Extra Employee Info', ar: 'معلومات الموظف الإضافية' },
+          can_edit_financial_info: { en: 'Financial Info', ar: 'المعلومات المالية' },
           can_resend_emails: { en: 'Resend Emails', ar: 'إعادة إرسال البريد' },
-          can_cancel_requests: { en: 'Cancel Requests', ar: 'إلغاء الطلبات' }
+          can_cancel_requests: { en: 'Cancel Requests', ar: 'إلغاء الطلبات' },
+          can_post_announcements: { en: 'Post Announcements', ar: 'نشر الإعلانات' },
         };
         const label = labelMap[key] || { en: key, ar: key };
         toast.success(
@@ -140,6 +148,17 @@ export function HRPermissionsManager() {
       bgColor: 'bg-violet-100 dark:bg-violet-900/30'
     },
     {
+      key: 'can_edit_financial_info' as const,
+      icon: Info,
+      label: t('Edit Financial Info', 'تعديل المعلومات المالية'),
+      description: t(
+        'Allow HR/Managers to add and edit financial information for employees (salary, benefits, deductions, etc.).',
+        'السماح لمديري الموارد البشرية بإضافة وتعديل المعلومات المالية للموظفين (الراتب، الفوائد، الخصومات، إلخ).'
+      ),
+      color: 'text-violet-600 dark:text-violet-400',
+      bgColor: 'bg-violet-100 dark:bg-violet-900/30'
+    },
+    {
       key: 'can_cancel_requests' as const,
       icon: Ban,
       label: t('Cancel Employee Requests', 'إلغاء طلبات الموظفين'),
@@ -153,7 +172,18 @@ export function HRPermissionsManager() {
         'Use with care — cancelling approved requests will notify the employee and restore any consumed leave balance.',
         'استخدم بحذر — إلغاء الطلبات الموافق عليها سيُشعر الموظف ويستعيد أي رصيد إجازة مستهلك.'
       )
-    }
+    },
+    {
+      key: 'can_post_announcements' as const,
+      icon: Megaphone,
+      label: t('Post Announcements', 'نشر الإعلانات'),
+      description: t(
+        'Allow HR/Managers to create, edit, pin, and delete company-wide announcements on behalf of the Admin. Announcements will appear to all employees.',
+        'السماح لمديري الموارد البشرية بإنشاء وتعديل وتثبيت وحذف الإعلانات على مستوى الشركة نيابةً عن المسؤول. ستظهر الإعلانات لجميع الموظفين.'
+      ),
+      color: 'text-orange-600 dark:text-orange-400',
+      bgColor: 'bg-orange-100 dark:bg-orange-900/30',
+    },
   ];
 
   if (loading) {
@@ -184,7 +214,7 @@ export function HRPermissionsManager() {
           <div>
             <CardTitle className="flex items-center gap-2">
               <Shield className="w-5 h-5 text-indigo-600" />
-              {t('HR/Manager Permissions', 'صلاحيات مدير الموارد ال��شرية')}
+              {t('HR/Manager Permissions', 'صلاحيات مدير الموارد الشرية')}
             </CardTitle>
             <CardDescription className="mt-1.5">
               {t(

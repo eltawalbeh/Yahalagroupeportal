@@ -11,6 +11,7 @@ import { Button } from '../components/ui/button';
 import { NotificationBell } from '../components/NotificationBell';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { AnnouncementView } from '../components/AnnouncementView';
+import { MyDocumentsCard } from '../components/MyDocumentsCard';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 
 /* ─────────────────────────────────────────────── types ── */
@@ -88,7 +89,7 @@ const TYPE_LABEL: Record<string, [string, string]> = {
 
 /* ════════════════════════════════════════════ MAIN PAGE ══ */
 interface CompanyPortalProps {
-  onServiceSelect: (service: 'leave' | 'advance' | 'entry' | 'history' | 'profile') => void;
+  onServiceSelect: (service: 'leave' | 'advance' | 'entry' | 'ticket' | 'history' | 'profile') => void;
   onLogout: () => void;
 }
 
@@ -104,6 +105,13 @@ export function CompanyPortal({ onServiceSelect, onLogout }: CompanyPortalProps)
   /* ── fetch ── */
   useEffect(() => {
     if (employee?.id) fetchRequests();
+  }, [employee?.id]);
+
+  // ── Refresh when the browser tab regains focus so stale data is never shown ──
+  useEffect(() => {
+    const onFocus = () => { if (employee?.id) fetchRequests(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, [employee?.id]);
 
   const fetchRequests = async () => {
@@ -141,13 +149,18 @@ export function CompanyPortal({ onServiceSelect, onLogout }: CompanyPortalProps)
     };
   }, [requests]);
 
-  /* ── derived: calendar leave-days map ── */
+  /* ── derived: calendar leave-days map ──
+   * ONLY show approved + pending.  Rejected, cancelled, or any other
+   * terminal status must be excluded so they never appear on the calendar.
+   */
   const leaveDays = useMemo(() => {
     const map = new Map<string, LeaveDay[]>();
     requests.forEach(r => {
-      if (r.type !== 'leave' || r.status === 'rejected') return;
+      // Whitelist approach — only active statuses are displayed
+      if (r.type !== 'leave' || !['approved', 'pending'].includes(r.status)) return;
       const start = new Date(r.start_date);
       const end   = new Date(r.end_date);
+      if (!r.start_date || !r.end_date || isNaN(start.getTime()) || isNaN(end.getTime())) return;
       const cur   = new Date(start);
       while (cur <= end) {
         const k = dateKey(cur);
@@ -229,6 +242,15 @@ export function CompanyPortal({ onServiceSelect, onLogout }: CompanyPortalProps)
       labelAr: 'خروج وعودة',
       descEn: 'Personal or work exit permission',
       descAr: 'خروج شخصي أو للعمل',
+    },
+    {
+      id: 'ticket' as const,
+      icon: Sparkles,
+      gradient: 'from-[#2d6a4f] to-[#52b788]',
+      labelEn: 'Annual Ticket / Re-Entry Visa',
+      labelAr: 'التذكرة السنوية / خروج وعودة',
+      descEn: 'Flight ticket or re-entry visa request',
+      descAr: 'تذكرة سفر أو تأشيرة خروج وعودة',
     },
   ];
 
@@ -388,7 +410,7 @@ export function CompanyPortal({ onServiceSelect, onLogout }: CompanyPortalProps)
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3 px-0.5">
             {t('New Request', 'طلب جديد')}
           </p>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
             {ACTIONS.map((action, i) => {
               const Icon = action.icon;
               return (
@@ -426,6 +448,23 @@ export function CompanyPortal({ onServiceSelect, onLogout }: CompanyPortalProps)
             })}
           </div>
         </div>
+
+        {/* ── My Documents Card (A) — shows passport/iqama/contract/visa expiry ── */}
+        {employee?.id && (
+          <motion.div
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ duration: 0.4, delay: 0.15 }}
+          >
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3 px-0.5">
+              {t('My Documents', 'مستنداتي')}
+            </p>
+            <MyDocumentsCard
+              employeeId={employee.id}
+              onNavigateToProfile={() => onServiceSelect('profile')}
+            />
+          </motion.div>
+        )}
 
         {/* ── Calendar + Timeline grid ── */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
