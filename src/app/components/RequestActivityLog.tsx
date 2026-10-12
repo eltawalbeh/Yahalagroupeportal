@@ -12,8 +12,8 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { useLanguage } from '../contexts/LanguageContext';
-import { Badge } from '../components/ui/badge';
-import { cn } from '../components/ui/utils';
+import { Badge } from './ui/badge';
+import { cn } from './ui/utils';
 
 export interface ActivityLogEntry {
   id: string;

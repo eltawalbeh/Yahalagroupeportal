@@ -25,18 +25,18 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { Button } from '../../components/ui/button';
-import { Sheet, SheetContent, SheetTrigger } from '../../components/ui/sheet';
-import { ThemeToggle } from '../../components/ThemeToggle';
-import { NotificationBell } from '../../components/NotificationBell';
-import { cn } from '../../components/ui/utils';
-import { Avatar, AvatarFallback, AvatarImage } from '../../components/ui/avatar';
+import { Button } from '../ui/button';
+import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
+import { ThemeToggle } from '../ThemeToggle';
+import { NotificationBell } from '../NotificationBell';
+import { cn } from '../ui/utils';
+import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "../../components/ui/dropdown-menu";
+} from "../ui/dropdown-menu";
 
 interface AdminLayoutProps {
   children: React.ReactNode;

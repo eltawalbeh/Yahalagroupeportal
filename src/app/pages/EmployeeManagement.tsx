@@ -365,7 +365,7 @@ export function EmployeeManagement({
           {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
-            body: JSON.stringify({ manager_id: hrManagerId, ...editDraft })
+            body: JSON.stringify({ ...editDraft, manager_id: hrManagerId })
           }
         );
       } else {
