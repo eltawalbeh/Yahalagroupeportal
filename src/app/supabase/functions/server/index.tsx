@@ -383,7 +383,8 @@ async function seedDatabase() {
 }
 
 // Initialize on startup
-initDatabase();
+// Automatic demo seeding is disabled in production. Provision required data explicitly.
+// initDatabase();
 
 // Database-aware health check: never report healthy without a successful DB query.
 async function checkDatabase(): Promise<boolean> {
