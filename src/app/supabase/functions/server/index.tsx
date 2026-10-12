@@ -385,13 +385,43 @@ async function seedDatabase() {
 // Initialize on startup
 initDatabase();
 
-// Health check endpoint
+// Database-aware health check: never report healthy without a successful DB query.
+async function checkDatabase(): Promise<boolean> {
+  const { error } = await supabase
+    .from('kv_store_fdcde35a')
+    .select('key')
+    .eq('key', '__database_healthcheck__')
+    .limit(1);
+  if (error) {
+    console.error('Database health check failed:', error.code);
+    return false;
+  }
+  return true;
+}
+
 app.get('/make-server-fdcde35a/health', async (c) => {
-  return c.json({ 
-    success: true, 
-    status: 'healthy',
+  const healthy = await checkDatabase();
+  return c.json({
+    success: healthy,
+    status: healthy ? 'healthy' : 'unhealthy',
     timestamp: new Date().toISOString()
-  });
+  }, healthy ? 200 : 503);
+});
+
+// Cron-only health endpoint. Set CRON_HEALTH_SECRET in Supabase Edge Function secrets.
+// Send it from cron-job.org in the X-Cron-Secret header, not in the URL.
+app.get('/make-server-fdcde35a/cron/database-health', async (c) => {
+  const expected = Deno.env.get('CRON_HEALTH_SECRET');
+  if (!expected) return c.json({ success: false, status: 'not_configured' }, 503);
+  if (c.req.header('X-Cron-Secret') !== expected) {
+    return c.json({ success: false, status: 'unauthorized' }, 401);
+  }
+  const healthy = await checkDatabase();
+  return c.json({
+    success: healthy,
+    status: healthy ? 'healthy' : 'unhealthy',
+    timestamp: new Date().toISOString()
+  }, healthy ? 200 : 503);
 });
 
 // Login route - supports both employee ID and email as username
